@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Garita · Bitácora</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <header class="flex items-center justify-between p-4 bg-slate-800 shadow">
+    <h1 class="text-2xl font-bold">🛡️ Control de Acceso · Garita</h1>
+    <div class="flex items-center gap-3">
+      <span id="conn" class="text-xs px-2 py-1 rounded bg-red-600">Desconectado</span>
+      <button id="btnSonido" class="text-sm px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500">🔇 Activar sonido</button>
+    </div>
+  </header>
+
+  <main class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+    <section>
+      <h2 class="text-lg font-semibold mb-3 text-amber-300">Pre-autorizados por llegar (<span id="cnt1">0</span>)</h2>
+      <ul id="col1" class="flex flex-col gap-3"></ul>
+    </section>
+    <section>
+      <h2 class="text-lg font-semibold mb-3 text-green-300">Adentro del Conjunto (<span id="cnt2">0</span>)</h2>
+      <ul id="col2" class="flex flex-col gap-3"></ul>
+    </section>
+  </main>
+
+<script>
+const ICONOS = { VISITA: '🧑', DELIVERY: '📦', TAXI_UBER: '🚕', SERVICIO_TECNICO: '🛠️' };
+const registros = new Map();
+let audioCtx = null, sonido = false;
+
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function beep() {
+  if (!sonido || !audioCtx) return;
+  const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+  osc.type = 'sine'; osc.frequency.value = 880;
+  gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+}
+
+document.getElementById('btnSonido').onclick = e => {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume();
+  sonido = !sonido;
+  e.target.textContent = sonido ? '🔊 Sonido activo' : '🔇 Activar sonido';
+  if (sonido) beep();
+};
+
+function card(r, accion, label, color) {
+  return `<li class="bg-slate-800 rounded-xl p-4 flex items-center gap-4 border border-slate-700">
+    <div class="text-4xl">${ICONOS[r.tipo] || '🧑'}</div>
+    <div class="flex-1 min-w-0">
+      <div class="font-semibold text-lg truncate">${esc(r.nombre_visitante)}</div>
+      <div class="text-sm text-slate-400">Casa ${esc(r.casa)} · ${esc(r.tipo)}${r.placa ? ' · 🚗 ' + esc(r.placa) : ''}</div>
+      ${r.observaciones ? `<div class="text-sm text-slate-300">${esc(r.observaciones)}</div>` : ''}
+      <div class="text-xs text-slate-500">${esc(r.autorizado_por)} · ${esc((r.fecha_hora || '').replace('T', ' '))}</div>
+    </div>
+    <button onclick="cambiar(${r.id}, '${accion}')" class="px-4 py-3 rounded-lg font-semibold ${color}">${label}</button>
+  </li>`;
+}
+
+function render() {
+  const all = [...registros.values()].sort((a, b) => a.id - b.id);
+  const pre = all.filter(r => r.estado === 'PRE_AUTORIZADO');
+  const dentro = all.filter(r => r.estado === 'ADENTRO');
+  document.getElementById('col1').innerHTML = pre.map(r => card(r, 'ADENTRO', 'Dar ingreso ➜', 'bg-green-600 hover:bg-green-500')).join('')
+    || '<li class="text-slate-500">Nadie por llegar</li>';
+  document.getElementById('col2').innerHTML = dentro.map(r => card(r, 'SALIO', '⬅ Dar salida', 'bg-red-600 hover:bg-red-500')).join('')
+    || '<li class="text-slate-500">Nadie adentro</li>';
+  document.getElementById('cnt1').textContent = pre.length;
+  document.getElementById('cnt2').textContent = dentro.length;
+}
+
+async function cambiar(id, estado) {
+  const res = await fetch('/api/cambiar-estado/' + id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado })
+  });
+  if (!res.ok) alert((await res.json()).detail || 'Error');
+}
+
+async function cargar() {
+  registros.clear();
+  (await (await fetch('/api/accesos')).json()).forEach(r => registros.set(r.id, r));
+  render();
+}
+
+function conectarWS() {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/bitacora`);
+  const conn = document.getElementById('conn');
+  ws.onopen = () => { conn.textContent = 'En vivo'; conn.className = 'text-xs px-2 py-1 rounded bg-green-600'; cargar(); };
+  ws.onmessage = e => { const m = JSON.parse(e.data); registros.set(m.registro.id, m.registro); render(); beep(); };
+  ws.onclose = () => { conn.textContent = 'Desconectado'; conn.className = 'text-xs px-2 py-1 rounded bg-red-600'; setTimeout(conectarWS, 2000); };
+}
+
+cargar(); conectarWS();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+Iniciar server.
+
+.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
+
+--stop
+
+Get-NetTCPConnection -LocalPort 8000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }

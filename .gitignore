@@ -1,0 +1,10 @@
+# Secretos
+.env
+
+# Entorno virtual y caché de Python
+.venv/
+__pycache__/
+*.pyc
+
+# Base de datos local
+bitacora.db

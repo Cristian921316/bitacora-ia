@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>Residente · Bitácora</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen flex flex-col items-center select-none">
+  <header class="w-full bg-indigo-600 text-white p-4 text-center shadow">
+    <h1 class="text-xl font-bold">Mis visitas</h1>
+    <p class="text-sm text-indigo-200">Mantén presionado el botón y dime a quién esperas</p>
+  </header>
+
+  <main class="w-full max-w-md p-4 flex-1 flex flex-col gap-4">
+    <div class="flex flex-col items-center gap-2 py-4">
+      <button id="btnMic"
+        class="w-32 h-32 rounded-full bg-indigo-600 text-white text-5xl shadow-lg active:scale-95 transition touch-none">🎤</button>
+      <p id="estado" class="text-sm text-slate-600 text-center min-h-5">Listo para grabar</p>
+    </div>
+
+    <div id="transcripcion" class="hidden bg-white rounded-xl p-3 text-sm text-slate-700 shadow"></div>
+
+    <h2 class="font-semibold text-slate-700">Pre-autorizaciones</h2>
+    <ul id="lista" class="flex flex-col gap-3 pb-8"></ul>
+  </main>
+
+<script>
+const ESTADOS = {
+  PRE_AUTORIZADO: ['Por llegar', 'bg-amber-100 text-amber-800'],
+  ADENTRO: ['Adentro', 'bg-green-100 text-green-800'],
+  SALIO: ['Salió', 'bg-slate-200 text-slate-600'],
+};
+const ICONOS = { VISITA: '🧑', DELIVERY: '📦', TAXI_UBER: '🚕', SERVICIO_TECNICO: '🛠️' };
+const registros = new Map();
+const lista = document.getElementById('lista');
+const estadoEl = document.getElementById('estado');
+const btn = document.getElementById('btnMic');
+const transEl = document.getElementById('transcripcion');
+
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function render() {
+  const items = [...registros.values()].sort((a, b) => b.id - a.id);
+  lista.innerHTML = items.map(r => {
+    const [txt, cls] = ESTADOS[r.estado];
+    return `<li class="bg-white rounded-xl p-3 shadow flex gap-3 items-start">
+      <div class="text-3xl">${ICONOS[r.tipo] || '🧑'}</div>
+      <div class="flex-1">
+        <div class="flex justify-between items-center gap-2">
+          <span class="font-semibold">${esc(r.nombre_visitante)}</span>
+          <span class="text-xs px-2 py-0.5 rounded-full ${cls}">${txt}</span>
+        </div>
+        <div class="text-xs text-slate-500">Casa ${esc(r.casa)} · ${esc(r.tipo)}${r.placa ? ' · ' + esc(r.placa) : ''}</div>
+        ${r.observaciones ? `<div class="text-sm text-slate-600 mt-1">${esc(r.observaciones)}</div>` : ''}
+      </div></li>`;
+  }).join('') || '<li class="text-center text-slate-400 py-6">Sin pre-autorizaciones</li>';
+}
+
+async function cargar() {
+  const res = await fetch('/api/accesos');
+  (await res.json()).forEach(r => registros.set(r.id, r));
+  render();
+}
+
+function conectarWS() {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/bitacora`);
+  ws.onmessage = e => { const m = JSON.parse(e.data); registros.set(m.registro.id, m.registro); render(); };
+  ws.onclose = () => setTimeout(conectarWS, 2000);
+}
+
+// Push-to-talk
+let recorder = null, chunks = [], stream = null;
+
+async function iniciar(e) {
+  e.preventDefault();
+  if (recorder) return;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    if (!window.isSecureContext) {
+      estadoEl.textContent = 'Contexto no seguro: abre la página como http://localhost:8000/residente o usa HTTPS';
+    } else if (err.name === 'NotAllowedError') {
+      estadoEl.textContent = 'Permiso de micrófono denegado: actívalo en el candado de la barra de direcciones y recarga';
+    } else if (err.name === 'NotFoundError') {
+      estadoEl.textContent = 'No se encontró ningún micrófono en este equipo';
+    } else {
+      estadoEl.textContent = 'Error de micrófono: ' + err.name;
+    }
+    return;
+  }
+  chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = ev => chunks.push(ev.data);
+  recorder.onstop = enviar;
+  recorder.start();
+  btn.classList.replace('bg-indigo-600', 'bg-red-600');
+  estadoEl.textContent = 'Grabando… suelta para enviar';
+}
+
+function detener(e) {
+  e.preventDefault();
+  if (recorder && recorder.state === 'recording') recorder.stop();
+}
+
+async function enviar() {
+  const rec = recorder; recorder = null;
+  stream.getTracks().forEach(t => t.stop());
+  btn.classList.replace('bg-red-600', 'bg-indigo-600');
+  const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+  if (blob.size < 1000) { estadoEl.textContent = 'Audio muy corto, intenta de nuevo'; return; }
+  estadoEl.textContent = 'Procesando…';
+  const fd = new FormData();
+  fd.append('audio', blob, 'nota.webm');
+  try {
+    const res = await fetch('/api/procesar-voz', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    transEl.textContent = '“' + data.transcripcion + '”';
+    transEl.classList.remove('hidden');
+    estadoEl.textContent = data.registros.length
+      ? `✅ ${data.registros.length} visita(s) pre-autorizada(s)` : 'No se detectaron visitas';
+    data.registros.forEach(r => registros.set(r.id, r));
+    render();
+  } catch (err) {
+    estadoEl.textContent = '❌ ' + err.message;
+  }
+}
+
+btn.addEventListener('pointerdown', iniciar);
+btn.addEventListener('pointerup', detener);
+btn.addEventListener('pointerleave', detener);
+btn.addEventListener('pointercancel', detener);
+btn.addEventListener('contextmenu', e => e.preventDefault());
+
+cargar(); conectarWS();
+</script>
+</body>
+</html>
