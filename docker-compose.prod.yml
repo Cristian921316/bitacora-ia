@@ -1,0 +1,98 @@
+# Producción en un VPS: HTTPS (Caddy) + app + WhatsApp (Evolution API con su Postgres y Redis).
+# Uso en el servidor:  docker compose up -d --build     (ver docs/DESPLIEGUE.md)
+name: bitacora
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }   # evita que los registros llenen el disco
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      DOMINIO: ${DOMINIO:?Falta DOMINIO en el archivo .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # certificados: no borrar (Let's Encrypt limita las emisiones)
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging: *logging
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      TZ: America/Guayaquil
+      DATABASE_URL: sqlite:////data/bitacora.db
+      COOKIE_SECURE: "1"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Falta OPENAI_API_KEY en el archivo .env}
+      ADMIN_USUARIO: ${ADMIN_USUARIO:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      EVOLUTION_URL: http://evolution-api:8080
+      EVOLUTION_APIKEY: ${EVOLUTION_APIKEY:?Falta EVOLUTION_APIKEY en el archivo .env}
+      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-bitacora}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?Falta WEBHOOK_TOKEN en el archivo .env}
+      SESION_HORAS: ${SESION_HORAS:-12}
+      BLOQUEO_POR_MORA: ${BLOQUEO_POR_MORA:-1}
+    volumes:
+      - app_data:/data          # aquí vive bitacora.db (y sus respaldos)
+    depends_on:
+      - evolution-api
+    logging: *logging
+
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${EVOLUTION_HOST_PORT:-8080}:8080"   # solo desde el propio servidor (QR por túnel SSH), nunca público
+    environment:
+      TZ: America/Guayaquil
+      SERVER_URL: http://evolution-api:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_APIKEY}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_DB_PASSWORD:?Falta EVOLUTION_DB_PASSWORD en el archivo .env}@postgres:5432/evolution
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/0
+      CONFIG_SESSION_PHONE_CLIENT: Bitacora
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - evolution_instances:/evolution/instances   # la vinculación del número de WhatsApp: no borrar
+    logging: *logging
+
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASSWORD}
+      POSTGRES_DB: evolution
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:
+  evolution_instances:
+  postgres_data:
