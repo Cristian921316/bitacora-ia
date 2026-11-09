@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Usuarios · Bitácora</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <script src="/assets/nav.js"></script>
+
+  <main class="max-w-4xl mx-auto p-4 space-y-6">
+    <h1 class="text-xl font-bold">🔑 Usuarios del sistema</h1>
+    <p class="text-sm text-slate-400">
+      <b>Guardia</b>: solo ve la pantalla de garita. <b>Administrador</b>: ve todo y puede hacer excepciones.
+      Quien recibe una clave nueva debe cambiarla en su primer ingreso.
+    </p>
+
+    <form id="form" class="bg-slate-800 border border-slate-700 rounded-xl p-4 grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
+      <label class="text-xs text-slate-400">Usuario
+        <input id="usuario" required placeholder="garita.noche" autocapitalize="none" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" /></label>
+      <label class="text-xs text-slate-400">Nombre
+        <input id="nombre" required placeholder="Juan Pérez" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" /></label>
+      <label class="text-xs text-slate-400">Rol
+        <select id="rol" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100">
+          <option value="GUARDIA">Guardia</option><option value="ADMIN">Administrador</option></select></label>
+      <label class="text-xs text-slate-400">Clave temporal
+        <input id="clave" required minlength="8" placeholder="mínimo 8" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" /></label>
+      <button class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 font-semibold text-sm">+ Crear</button>
+      <p id="msg" class="col-span-2 md:col-span-5 text-sm hidden"></p>
+    </form>
+
+    <div class="overflow-x-auto rounded-xl border border-slate-700">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-800 text-left text-xs uppercase text-slate-400">
+          <tr><th class="px-3 py-2">Usuario</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2">Rol</th>
+              <th class="px-3 py-2">Estado</th><th class="px-3 py-2"></th></tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+<script>
+const $ = id => document.getElementById(id);
+let lista = [];
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function aviso(t, ok) { $('msg').textContent = t; $('msg').className = 'col-span-2 md:col-span-5 text-sm ' + (ok ? 'text-green-300' : 'text-red-300'); }
+
+function render() {
+  $('tbody').innerHTML = lista.map(u => `<tr class="border-t border-slate-800">
+    <td class="px-3 py-2 font-mono">${esc(u.usuario)}</td>
+    <td class="px-3 py-2">${esc(u.nombre)}</td>
+    <td class="px-3 py-2">${u.rol === 'ADMIN' ? '<span class="text-amber-300">Administrador</span>' : 'Guardia'}</td>
+    <td class="px-3 py-2">${u.activo ? '<span class="text-green-300">Activo</span>' : '<span class="text-slate-500">Desactivado</span>'}${u.debe_cambiar_clave ? ' <span class="text-xs text-amber-300">(debe cambiar su clave)</span>' : ''}</td>
+    <td class="px-3 py-2 text-right whitespace-nowrap">
+      <button data-a="clave" data-id="${u.id}" class="acc text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Restablecer clave</button>
+      <button data-a="activo" data-id="${u.id}" class="acc text-xs px-2 py-1 rounded ${u.activo ? 'bg-red-600/80 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500'}">${u.activo ? 'Desactivar' : 'Activar'}</button>
+    </td></tr>`).join('');
+}
+
+async function cargar() { lista = await (await fetch('/api/usuarios')).json(); render(); }
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const res = await fetch('/api/usuarios', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ usuario: $('usuario').value, nombre: $('nombre').value, rol: $('rol').value, clave: $('clave').value }) });
+  const data = await res.json();
+  if (!res.ok) return aviso(data.detail || 'Error al crear', false);
+  aviso(`Usuario "${data.usuario}" creado. Entrégale su clave temporal.`, true);
+  $('form').reset(); cargar();
+};
+
+$('tbody').onclick = async e => {
+  const b = e.target.closest('.acc'); if (!b) return;
+  const u = lista.find(x => String(x.id) === b.dataset.id);
+  if (b.dataset.a === 'clave') {
+    const nueva = prompt(`Clave temporal para ${u.usuario} (mínimo 8 caracteres).\nDeberá cambiarla al ingresar.`);
+    if (!nueva) return;
+    const res = await fetch(`/api/usuarios/${u.id}/clave`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clave: nueva }) });
+    const data = await res.json();
+    aviso(res.ok ? `Clave de "${u.usuario}" restablecida. Sus sesiones abiertas se cerraron.` : (data.detail || 'Error'), res.ok);
+  } else {
+    if (u.activo && !confirm(`¿Desactivar a ${u.usuario}? Se cerrará su sesión de inmediato.`)) return;
+    const res = await fetch(`/api/usuarios/${u.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ activo: !u.activo }) });
+    if (!res.ok) aviso((await res.json()).detail || 'Error', false);
+  }
+  cargar();
+};
+cargar();
+</script>
+</body>
+</html>

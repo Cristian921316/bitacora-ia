@@ -7,9 +7,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 min-h-screen flex flex-col items-center select-none">
+  <script src="/assets/nav.js"></script>
   <header class="w-full bg-indigo-600 text-white p-4 text-center shadow">
     <h1 class="text-xl font-bold">Mis visitas</h1>
-    <p class="text-sm text-indigo-200">Mantén presionado el botón y dime a quién esperas</p>
+    <p class="text-sm text-indigo-200">Mantén presionado el botón o escribe a quién esperas</p>
   </header>
 
   <main class="w-full max-w-md p-4 flex-1 flex flex-col gap-4">
@@ -18,6 +19,13 @@
         class="w-32 h-32 rounded-full bg-indigo-600 text-white text-5xl shadow-lg active:scale-95 transition touch-none">🎤</button>
       <p id="estado" class="text-sm text-slate-600 text-center min-h-5">Listo para grabar</p>
     </div>
+
+    <form id="formTexto" class="flex gap-2">
+      <input id="texto" type="text" maxlength="1000" autocomplete="off"
+        placeholder="…o escribe: Hoy viene Juan Pérez en taxi, placa ABC123"
+        class="select-text flex-1 min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+      <button class="px-4 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Enviar</button>
+    </form>
 
     <div id="transcripcion" class="hidden bg-white rounded-xl p-3 text-sm text-slate-700 shadow"></div>
 
@@ -30,6 +38,9 @@ const ESTADOS = {
   PRE_AUTORIZADO: ['Por llegar', 'bg-amber-100 text-amber-800'],
   ADENTRO: ['Adentro', 'bg-green-100 text-green-800'],
   SALIO: ['Salió', 'bg-slate-200 text-slate-600'],
+  PENDIENTE: ['Esperando respuesta', 'bg-purple-100 text-purple-800'],
+  RECHAZADO: ['No autorizado', 'bg-red-100 text-red-800'],
+  VENCIDA: ['Vencida', 'bg-slate-200 text-slate-500'],
 };
 const ICONOS = { VISITA: '🧑', DELIVERY: '📦', TAXI_UBER: '🚕', SERVICIO_TECNICO: '🛠️' };
 const registros = new Map();
@@ -58,7 +69,7 @@ function render() {
 }
 
 async function cargar() {
-  const res = await fetch('/api/accesos');
+  const res = await fetch('/api/accesos?todos=1');
   (await res.json()).forEach(r => registros.set(r.id, r));
   render();
 }
@@ -126,6 +137,30 @@ async function enviar() {
     estadoEl.textContent = '❌ ' + err.message;
   }
 }
+
+document.getElementById('formTexto').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input = document.getElementById('texto');
+  const texto = input.value.trim();
+  if (!texto) return;
+  estadoEl.textContent = 'Procesando…';
+  try {
+    const res = await fetch('/api/procesar-texto', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    input.value = '';
+    transEl.textContent = '“' + data.transcripcion + '”';
+    transEl.classList.remove('hidden');
+    estadoEl.textContent = data.registros.length
+      ? `✅ ${data.registros.length} visita(s) pre-autorizada(s)` : 'No se detectaron visitas';
+    data.registros.forEach(r => registros.set(r.id, r));
+    render();
+  } catch (err) {
+    estadoEl.textContent = '❌ ' + err.message;
+  }
+});
 
 btn.addEventListener('pointerdown', iniciar);
 btn.addEventListener('pointerup', detener);

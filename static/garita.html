@@ -5,33 +5,92 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Garita · Bitácora</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .col-scroll { scrollbar-width: thin; scrollbar-color: #475569 transparent; }
+  </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen">
-  <header class="flex items-center justify-between p-4 bg-slate-800 shadow">
-    <h1 class="text-2xl font-bold">🛡️ Control de Acceso · Garita</h1>
-    <div class="flex items-center gap-3">
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col overflow-hidden">
+  <script src="/assets/nav.js"></script>
+  <header class="flex flex-wrap items-center gap-3 px-4 py-3 bg-slate-800 shadow">
+    <h1 class="text-xl font-bold whitespace-nowrap">🛡️ Garita</h1>
+    <div class="relative flex-1 min-w-[220px] max-w-xl">
+      <input id="buscar" type="search" autocomplete="off"
+        placeholder="Buscar: Mz 6 Villa 23, nombre o placa…  ( / )"
+        class="w-full rounded-lg bg-slate-900 border border-slate-600 focus:border-indigo-400 focus:outline-none px-3 py-2 text-sm placeholder-slate-500" />
+    </div>
+    <span id="resumen" class="text-xs text-slate-400 hidden"></span>
+    <button id="btnSinAviso" class="text-sm px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold whitespace-nowrap">➕ Visita sin aviso</button>
+    <div class="flex items-center gap-3 ml-auto">
       <span id="conn" class="text-xs px-2 py-1 rounded bg-red-600">Desconectado</span>
-      <button id="btnSonido" class="text-sm px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500">🔇 Activar sonido</button>
+      <button id="btnSonido" class="text-sm px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 whitespace-nowrap">🔇 Activar sonido</button>
     </div>
   </header>
 
-  <main class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-    <section>
-      <h2 class="text-lg font-semibold mb-3 text-amber-300">Pre-autorizados por llegar (<span id="cnt1">0</span>)</h2>
-      <ul id="col1" class="flex flex-col gap-3"></ul>
+  <main id="grid" class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+    <section class="flex flex-col min-h-0">
+      <h2 class="text-base font-semibold mb-2 text-purple-300">Esperando autorización (<span id="cnt0">0</span>)</h2>
+      <ul id="col0" class="col-scroll flex-1 overflow-y-auto flex flex-col gap-1.5 pr-1"></ul>
     </section>
-    <section>
-      <h2 class="text-lg font-semibold mb-3 text-green-300">Adentro del Conjunto (<span id="cnt2">0</span>)</h2>
-      <ul id="col2" class="flex flex-col gap-3"></ul>
+    <section class="flex flex-col min-h-0">
+      <h2 class="text-base font-semibold mb-2 text-amber-300">Pre-autorizados por llegar (<span id="cnt1">0</span>)</h2>
+      <ul id="col1" class="col-scroll flex-1 overflow-y-auto flex flex-col gap-1.5 pr-1"></ul>
+    </section>
+    <section id="secAdentro" class="hidden flex flex-col min-h-0">
+      <h2 class="text-base font-semibold mb-2 text-green-300">Adentro del Conjunto (<span id="cnt2">0</span>) <span id="alertaAyer" class="hidden ml-1 text-xs px-2 py-0.5 rounded bg-red-700 text-red-100 align-middle"></span></h2>
+      <ul id="col2" class="col-scroll flex-1 overflow-y-auto flex flex-col gap-1.5 pr-1"></ul>
     </section>
   </main>
 
+  <!-- Ventana: registrar una visita que llegó sin avisar -->
+  <div id="modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+    <form id="formSinAviso" class="bg-slate-800 border border-slate-600 rounded-xl p-5 w-full max-w-md grid grid-cols-2 gap-3">
+      <h3 class="col-span-2 text-lg font-bold">➕ Visita sin aviso</h3>
+      <p class="col-span-2 text-xs text-slate-400 -mt-1">Se le preguntará por WhatsApp al residente si autoriza el ingreso.</p>
+      <label class="text-xs text-slate-400">Manzana
+        <input id="saMz" required maxlength="10" placeholder="6" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+      <label class="text-xs text-slate-400">Villa
+        <input id="saVilla" required maxlength="10" placeholder="23" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+      <label class="col-span-2 text-xs text-slate-400">Nombre del visitante
+        <input id="saNombre" required maxlength="80" placeholder="Juan Pérez" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+      <label class="text-xs text-slate-400">Tipo
+        <select id="saTipo" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm">
+          <option value="VISITA">Visita</option><option value="DELIVERY">Delivery</option>
+          <option value="TAXI_UBER">Taxi/Uber</option><option value="SERVICIO_TECNICO">Servicio técnico</option>
+        </select></label>
+      <label class="text-xs text-slate-400">Placa (opcional)
+        <input id="saPlaca" maxlength="12" placeholder="ABC123" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+      <label class="col-span-2 text-xs text-slate-400">Observaciones (opcional)
+        <input id="saObs" maxlength="200" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+      <div class="col-span-2 flex justify-end gap-2 mt-1">
+        <button type="button" id="saCancelar" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm">Cancelar</button>
+        <button class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold text-sm">Preguntar al residente</button>
+      </div>
+    </form>
+  </div>
+  <div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm shadow-lg z-50"></div>
+
 <script>
 const ICONOS = { VISITA: '🧑', DELIVERY: '📦', TAXI_UBER: '🚕', SERVICIO_TECNICO: '🛠️' };
+const TIPOS = { VISITA: 'Visita', DELIVERY: 'Delivery', TAXI_UBER: 'Taxi/Uber', SERVICIO_TECNICO: 'Serv. técnico' };
 const registros = new Map();
-let audioCtx = null, sonido = false;
+let audioCtx = null, sonido = false, filtro = '';
+// Parámetros del servidor y su reloj: así las vigencias y los "hace N min" no dependen de la zona horaria del navegador
+let CFG = { vigencia_horas: 12, rechazo_visible_minutos: 30, control_salidas: false }, desfaseMs = 0;
+async function cargarConfig() {
+  CFG = await (await fetch('/api/config')).json();
+  desfaseMs = Date.parse(CFG.ahora_servidor) - Date.now();
+}
+const ahoraServidor = () => Date.now() + desfaseMs;
+function hoyServidor() {
+  const d = new Date(ahoraServidor()), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+}
+// Adentro desde un día anterior: hay que revisarlo
+const esDeAyer = r => r.estado === 'ADENTRO' && ((r.hora_ingreso || r.fecha_hora || '').slice(0, 10) < hoyServidor());
 
 function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// minúsculas y sin acentos, para que "perez" encuentre "Pérez"
+function norm(s) { return (s ?? '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
 
 function beep() {
   if (!sonido || !audioCtx) return;
@@ -51,30 +110,134 @@ document.getElementById('btnSonido').onclick = e => {
   if (sonido) beep();
 };
 
-function card(r, accion, label, color) {
-  return `<li class="bg-slate-800 rounded-xl p-4 flex items-center gap-4 border border-slate-700">
-    <div class="text-4xl">${ICONOS[r.tipo] || '🧑'}</div>
-    <div class="flex-1 min-w-0">
-      <div class="font-semibold text-lg truncate">${esc(r.nombre_visitante)}</div>
-      <div class="text-sm text-slate-400">Casa ${esc(r.casa)} · ${esc(r.tipo)}${r.placa ? ' · 🚗 ' + esc(r.placa) : ''}</div>
-      ${r.observaciones ? `<div class="text-sm text-slate-300">${esc(r.observaciones)}</div>` : ''}
-      <div class="text-xs text-slate-500">${esc(r.autorizado_por)} · ${esc((r.fecha_hora || '').replace('T', ' '))}</div>
+function hora(fh) { return (fh || '').replace('T', ' ').slice(5, 16); } // MM-DD HH:MM
+
+function fila(r, accion, label, color) {
+  const detalle = [r.observaciones, r.autorizado_por, r.fecha_hora && r.fecha_hora.replace('T', ' ')].filter(Boolean).join(' · ');
+  const ayer = esDeAyer(r);
+  return `<li title="${esc(detalle)}" class="rounded-lg px-3 py-2 flex items-center gap-3 border ${ayer ? 'bg-red-950/60 border-red-500' : 'bg-slate-800 border-slate-700'}">
+    <div class="text-xl leading-none">${ayer ? '⚠️' : (ICONOS[r.tipo] || '🧑')}</div>
+    <div class="flex-1 min-w-0 leading-tight">
+      <div class="font-semibold text-sm truncate">${esc(r.nombre_visitante)}</div>
+      <div class="text-xs ${ayer ? 'text-red-300' : 'text-slate-400'} truncate">🏠 ${esc(r.casa)} · ${esc(TIPOS[r.tipo] || r.tipo)}${r.placa ? ' · 🚗 ' + esc(r.placa) : ''} · ${ayer ? 'Adentro desde ' + esc(hora(r.hora_ingreso || r.fecha_hora)) : esc(hora(r.fecha_hora))}${r.hora_respuesta && r.estado === 'PRE_AUTORIZADO' ? ' · ✅ Autorizó en puerta' : ''}${r.observaciones ? ' · ' + esc(r.observaciones) : ''}</div>
     </div>
-    <button onclick="cambiar(${r.id}, '${accion}')" class="px-4 py-3 rounded-lg font-semibold ${color}">${label}</button>
+    <button onclick="cambiar(${r.id}, '${accion}')" class="px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap ${color}">${label}</button>
   </li>`;
 }
 
+function minutos(fh) { const t = Date.parse(fh); return isNaN(t) ? 0 : Math.max(0, Math.round((ahoraServidor() - t) / 60000)); }
+
+// Filas de la columna "Esperando autorización": pendientes y rechazos recientes
+function filaEspera(r) {
+  const base = `🏠 ${esc(r.casa)} · ${esc(TIPOS[r.tipo] || r.tipo)}${r.placa ? ' · 🚗 ' + esc(r.placa) : ''}`;
+  if (r.estado === 'RECHAZADO') {
+    return `<li class="bg-red-950/60 rounded-lg px-3 py-2 flex items-center gap-3 border border-red-500">
+      <div class="text-xl leading-none">⛔</div>
+      <div class="flex-1 min-w-0 leading-tight">
+        <div class="font-semibold text-sm truncate">${esc(r.nombre_visitante)}</div>
+        <div class="text-xs text-red-300 truncate">${base} · El residente NO autorizó · hace ${minutos(r.hora_respuesta)} min</div>
+      </div></li>`;
+  }
+  return `<li class="bg-slate-800 rounded-lg px-3 py-2 flex items-center gap-3 border border-purple-500">
+    <div class="text-xl leading-none">⏳</div>
+    <div class="flex-1 min-w-0 leading-tight">
+      <div class="font-semibold text-sm truncate">${esc(r.nombre_visitante)}</div>
+      <div class="text-xs text-purple-300 truncate">${base} · esperando respuesta · hace ${minutos(r.fecha_hora)} min</div>
+    </div>
+    <div class="flex flex-col gap-1 shrink-0">
+      <button onclick="ingresarIgual(${r.id})" class="px-2 py-1 rounded-md text-xs font-semibold bg-amber-600 hover:bg-amber-500 whitespace-nowrap">Ingresar igual</button>
+      <button onclick="cambiar(${r.id}, 'SALIO')" class="px-2 py-1 rounded-md text-xs font-semibold bg-slate-600 hover:bg-slate-500 whitespace-nowrap">Se retiró</button>
+    </div></li>`;
+}
+
+function ingresarIgual(id) {
+  if (confirm('El residente todavía no responde.\n¿Dar ingreso de todos modos?')) cambiar(id, 'ADENTRO');
+}
+
+function toast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm shadow-lg z-50 ' + (ok ? 'bg-green-700' : 'bg-amber-600');
+  setTimeout(() => t.classList.add('hidden'), 6000);
+}
+
+// Extrae manzana y villa de un texto ya normalizado. Acepta "mz 6 villa 23", "mz6 v23", "manzana 6 casa 23" o "6 23".
+function parseCasa(t) {
+  let mz = null, vi = null;
+  let resto = t.replace(/\b(?:mz|mza|manzana)\.?(?:\s+|(?=\d))([a-z0-9]+)/, (_, x) => { mz = x; return ' '; });
+  resto = resto.replace(/\b(?:villa|casa|lote)\.?\s*([a-z0-9]+)/, (_, x) => { vi = x; return ' '; });
+  if (vi === null) resto = resto.replace(/\bv\.?\s*(\d+)\b/, (_, x) => { vi = x; return ' '; });
+  resto = resto.trim();
+  const nums = resto.match(/^(\d+)\s+(\d+)$/);            // solo "6 23"
+  if (mz === null && vi === null && nums) { mz = nums[1]; vi = nums[2]; resto = ''; }
+  return { mz, vi, resto };
+}
+
+// Se calcula UNA vez por registro (no en cada tecla) para que buscar sea instantáneo.
+function indexar(r) {
+  const c = parseCasa(norm(r.casa));
+  r._mz = c.mz; r._vi = c.vi;
+  if (c.mz === null && c.vi === null && /^[a-z0-9]+$/.test(norm(r.casa))) r._vi = norm(r.casa); // casa simple, ej. "12"
+  r._txt = norm([r.nombre_visitante, r.casa, r.placa, r.tipo, TIPOS[r.tipo], r.observaciones, r.autorizado_por].join(' '));
+  return r;
+}
+
+let consulta = { mz: null, vi: null, tokens: [] };
+function prepararConsulta(texto) {
+  const c = parseCasa(texto);
+  consulta = { mz: c.mz, vi: c.vi, tokens: c.resto ? c.resto.split(/\s+/) : [] };
+}
+
+function coincide(r) {
+  if (!filtro) return true;
+  if (consulta.mz !== null && r._mz !== consulta.mz) return false;   // manzana exacta
+  if (consulta.vi !== null && r._vi !== consulta.vi) return false;   // villa exacta
+  return consulta.tokens.every(t => r._txt.includes(t));             // palabras restantes (nombre, placa…)
+}
+
 function render() {
-  const all = [...registros.values()].sort((a, b) => a.id - b.id);
-  const pre = all.filter(r => r.estado === 'PRE_AUTORIZADO');
-  const dentro = all.filter(r => r.estado === 'ADENTRO');
-  document.getElementById('col1').innerHTML = pre.map(r => card(r, 'ADENTRO', 'Dar ingreso ➜', 'bg-green-600 hover:bg-green-500')).join('')
-    || '<li class="text-slate-500">Nadie por llegar</li>';
-  document.getElementById('col2').innerHTML = dentro.map(r => card(r, 'SALIO', '⬅ Dar salida', 'bg-red-600 hover:bg-red-500')).join('')
-    || '<li class="text-slate-500">Nadie adentro</li>';
+  const all = [...registros.values()].sort((a, b) => b.id - a.id); // más recientes arriba
+  const vis = all.filter(coincide);
+  const vigente = r => minutos(r.fecha_hora) <= CFG.vigencia_horas * 60;  // las vencidas ya no se muestran
+  const espera = vis.filter(r => (r.estado === 'PENDIENTE' && vigente(r)) ||
+                                 (r.estado === 'RECHAZADO' && minutos(r.hora_respuesta) <= CFG.rechazo_visible_minutos));
+  const pre = vis.filter(r => r.estado === 'PRE_AUTORIZADO' && vigente(r));
+  const dentro = !CFG.control_salidas ? [] : vis.filter(r => r.estado === 'ADENTRO').sort((a, b) => (esDeAyer(b) - esDeAyer(a)) || (b.id - a.id));  // los de ayer primero
+  const rezagados = dentro.filter(esDeAyer).length;
+  const aviso = document.getElementById('alertaAyer');
+  aviso.classList.toggle('hidden', !rezagados);
+  aviso.textContent = `⚠️ ${rezagados} desde ayer`;
+  // Con el control de salidas apagado (piloto) la garita solo muestra pre-autorizadas y pendientes de autorizar
+  document.getElementById('secAdentro').classList.toggle('hidden', !CFG.control_salidas);
+  document.getElementById('grid').className = 'flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 p-4' +
+    (CFG.control_salidas ? ' lg:grid-cols-3' : '');
+  const vacio = msg => `<li class="text-slate-500 text-sm px-1">${msg}</li>`;
+  const MAX = 100; // pintar solo lo más reciente; el contador sí muestra el total
+  const pintar = (lista, accion, label, color, vacioMsg) => {
+    if (!lista.length) return vacio(filtro ? 'Sin resultados' : vacioMsg);
+    const resto = lista.length - MAX;
+    return lista.slice(0, MAX).map(r => fila(r, accion, label, color)).join('')
+      + (resto > 0 ? vacio(`+${resto} más antiguos · afina la búsqueda`) : '');
+  };
+  document.getElementById('col0').innerHTML = espera.map(filaEspera).join('') || vacio(filtro ? 'Sin resultados' : 'Nadie esperando');
+  document.getElementById('cnt0').textContent = espera.filter(r => r.estado === 'PENDIENTE').length;
+  document.getElementById('col1').innerHTML = pintar(pre, 'ADENTRO', 'Ingreso ➜', 'bg-green-600 hover:bg-green-500', 'Nadie por llegar');
+  document.getElementById('col2').innerHTML = pintar(dentro, 'SALIO', '⬅ Salida', 'bg-red-600 hover:bg-red-500', 'Nadie adentro');
   document.getElementById('cnt1').textContent = pre.length;
   document.getElementById('cnt2').textContent = dentro.length;
+  const resumen = document.getElementById('resumen');
+  resumen.classList.toggle('hidden', !filtro);
+  resumen.textContent = `${espera.length + pre.length + dentro.length} resultado(s)`;
 }
+
+const inputBuscar = document.getElementById('buscar');
+function aplicarFiltro() { filtro = norm(inputBuscar.value).trim(); prepararConsulta(filtro); render(); }
+inputBuscar.addEventListener('input', aplicarFiltro);
+inputBuscar.addEventListener('keydown', e => { if (e.key === 'Escape') { inputBuscar.value = ''; aplicarFiltro(); } });
+document.addEventListener('keydown', e => {
+  const enCampo = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  if (e.key === '/' && !enCampo) { e.preventDefault(); inputBuscar.focus(); }
+});
 
 async function cambiar(id, estado) {
   const res = await fetch('/api/cambiar-estado/' + id, {
@@ -84,8 +247,9 @@ async function cambiar(id, estado) {
 }
 
 async function cargar() {
+  await cargarConfig();
   registros.clear();
-  (await (await fetch('/api/accesos')).json()).forEach(r => registros.set(r.id, r));
+  (await (await fetch('/api/accesos')).json()).forEach(r => registros.set(r.id, indexar(r)));
   render();
 }
 
@@ -93,10 +257,34 @@ function conectarWS() {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/bitacora`);
   const conn = document.getElementById('conn');
   ws.onopen = () => { conn.textContent = 'En vivo'; conn.className = 'text-xs px-2 py-1 rounded bg-green-600'; cargar(); };
-  ws.onmessage = e => { const m = JSON.parse(e.data); registros.set(m.registro.id, m.registro); render(); beep(); };
-  ws.onclose = () => { conn.textContent = 'Desconectado'; conn.className = 'text-xs px-2 py-1 rounded bg-red-600'; setTimeout(conectarWS, 2000); };
+  ws.onmessage = e => { const m = JSON.parse(e.data); registros.set(m.registro.id, indexar(m.registro)); render(); beep(); };
+  ws.onclose = () => { fetch('/api/yo'); /* si la sesión expiró, vuelve al login */ conn.textContent = 'Desconectado'; conn.className = 'text-xs px-2 py-1 rounded bg-red-600'; setTimeout(conectarWS, 2000); };
 }
 
+// --- Visita sin aviso ---
+const modal = document.getElementById('modal'), formSA = document.getElementById('formSinAviso');
+document.getElementById('btnSinAviso').onclick = () => { modal.classList.remove('hidden'); document.getElementById('saMz').focus(); };
+document.getElementById('saCancelar').onclick = () => modal.classList.add('hidden');
+formSA.onsubmit = async e => {
+  e.preventDefault();
+  const res = await fetch('/api/visita-sin-aviso', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mz: saMz.value, villa: saVilla.value, nombre_visitante: saNombre.value, tipo: saTipo.value,
+      placa: saPlaca.value || null, observaciones: saObs.value || null,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) { toast('❌ ' + (data.detail || 'Error al registrar'), false); return; }
+  modal.classList.add('hidden'); formSA.reset();
+  registros.set(data.registro.id, indexar(data.registro)); render();
+  toast(data.residentes_avisados
+    ? `📲 Se preguntó a ${data.residentes_avisados} residente(s) por WhatsApp`
+    : '⚠️ Esa casa no tiene residentes registrados con WhatsApp: confirma por otro medio', !!data.residentes_avisados);
+};
+
+setInterval(render, 30000);  // refresca los "hace N min" y oculta lo que acaba de vencer
+setInterval(cargar, 120000); // cada 2 min recarga la lista y los parámetros (por si el administrador los cambió)
 cargar(); conectarWS();
 </script>
 </body>

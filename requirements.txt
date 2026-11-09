@@ -3,3 +3,8 @@ uvicorn[standard]
 python-dotenv
 openai
 python-multipart
+httpx
+openpyxl
+sqlalchemy>=2.0
+alembic
+psycopg[binary]

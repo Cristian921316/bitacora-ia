@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cambiar contraseña · Bitácora</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+  <form id="form" class="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl p-6 space-y-4 shadow-xl">
+    <div class="text-center">
+      <div class="text-4xl">🔑</div>
+      <h1 class="text-xl font-bold mt-1">Cambiar contraseña</h1>
+      <p id="aviso" class="text-sm text-amber-300 hidden">Por seguridad debes elegir una contraseña nueva antes de continuar.</p>
+    </div>
+    <label class="block text-xs text-slate-400">Contraseña actual
+      <input id="actual" type="password" required autocomplete="current-password"
+        class="block w-full mt-1 rounded-lg bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" /></label>
+    <label class="block text-xs text-slate-400">Contraseña nueva (mínimo 8 caracteres)
+      <input id="nueva" type="password" required minlength="8" autocomplete="new-password"
+        class="block w-full mt-1 rounded-lg bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" /></label>
+    <label class="block text-xs text-slate-400">Repite la contraseña nueva
+      <input id="repite" type="password" required minlength="8" autocomplete="new-password"
+        class="block w-full mt-1 rounded-lg bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" /></label>
+    <p id="msg" class="text-sm hidden"></p>
+    <button class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold">Guardar contraseña</button>
+    <p class="text-center text-xs"><a id="volver" href="/garita" class="text-slate-400 hover:text-slate-200 underline">Volver</a>
+      · <a href="#" id="salir" class="text-slate-400 hover:text-slate-200 underline">Salir</a></p>
+  </form>
+
+<script>
+const $ = id => document.getElementById(id);
+function msg(t, ok) { $('msg').textContent = t; $('msg').className = 'text-sm ' + (ok ? 'text-green-300' : 'text-red-300'); }
+
+(async () => {
+  const r = await fetch('/api/yo');
+  if (r.status === 401) { location.href = '/login?next=/clave'; return; }
+  const yo = await r.json();
+  if (yo.debe_cambiar_clave) { $('aviso').classList.remove('hidden'); $('volver').classList.add('hidden'); }
+})();
+
+$('salir').onclick = async e => { e.preventDefault(); await fetch('/api/salir', { method: 'POST' }); location.href = '/login'; };
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  if ($('nueva').value !== $('repite').value) return msg('Las contraseñas nuevas no coinciden', false);
+  const res = await fetch('/api/cambiar-clave', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clave_actual: $('actual').value, clave_nueva: $('nueva').value }),
+  });
+  const data = await res.json();
+  if (!res.ok) return msg(data.detail || 'Error al cambiar la contraseña', false);
+  msg('Contraseña actualizada. Entrando…', true);
+  setTimeout(() => location.href = '/garita', 700);
+};
+</script>
+</body>
+</html>

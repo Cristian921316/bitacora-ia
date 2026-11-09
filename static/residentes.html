@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Residentes · Bitácora</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <script src="/assets/nav.js"></script>
+
+  <main class="max-w-4xl mx-auto p-4 space-y-6">
+    <div class="flex flex-wrap items-center gap-3">
+      <h1 class="text-xl font-bold">👥 Residentes</h1>
+      <button id="btnImportar" class="ml-auto px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm">📥 Importar residentes (Excel)</button>
+    </div>
+
+    <form id="form" class="bg-slate-800 border border-slate-700 rounded-xl p-4 grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
+      <label class="text-xs text-slate-400">Manzana
+        <input id="mz" required placeholder="6" maxlength="6" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      </label>
+      <label class="text-xs text-slate-400">Villa
+        <input id="villa" required placeholder="23" maxlength="6" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      </label>
+      <label class="text-xs text-slate-400 col-span-2 md:col-span-1">Nombre
+        <input id="nombre" placeholder="Opcional" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      </label>
+      <label class="text-xs text-slate-400 col-span-2 md:col-span-1">Celular (WhatsApp)
+        <input id="telefono" required inputmode="tel" placeholder="0988391178" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      </label>
+      <button class="col-span-2 md:col-span-1 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 font-semibold text-sm">+ Agregar</button>
+      <p id="msg" class="col-span-2 md:col-span-5 text-sm hidden"></p>
+    </form>
+
+    <section>
+      <div class="flex flex-wrap items-center gap-3 mb-2">
+        <h2 class="font-semibold">Registrados (<span id="cnt">0</span>)</h2>
+        <span id="chips" class="text-xs flex gap-2"></span>
+        <select id="filtro" class="rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-sm text-slate-100">
+          <option value="">Todos</option><option value="impago">Solo impagos</option><option value="aldia">Solo al día</option>
+        </select>
+        <input id="buscar" type="search" autocomplete="off" placeholder="Buscar por casa, nombre o celular…"
+          class="flex-1 min-w-[180px] max-w-sm rounded bg-slate-900 border border-slate-600 focus:border-indigo-400 focus:outline-none px-3 py-1.5 text-sm placeholder-slate-500" />
+      </div>
+      <p class="text-xs text-slate-500 mb-2">El estado de pago es <b>por casa</b>: al cambiarlo se aplica a todos los celulares de esa casa.
+        Una casa <b>impaga</b> no puede recibir visitas (solo un administrador puede hacer una excepción).</p>
+      <div class="overflow-x-auto rounded-xl border border-slate-700">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-800 text-left text-xs uppercase text-slate-400">
+            <tr><th class="px-3 py-2">Casa</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2">Cédula</th><th class="px-3 py-2">Celular</th>
+                <th class="px-3 py-2">Pago</th><th class="px-3 py-2"></th></tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Ventana: importar residentes desde Excel/CSV -->
+  <div id="modalImp" class="hidden fixed inset-0 bg-black/60 flex items-start justify-center p-4 z-50 overflow-y-auto">
+    <div class="bg-slate-800 border border-slate-600 rounded-xl p-5 w-full max-w-3xl mt-6 space-y-4">
+      <div class="flex items-center">
+        <h3 class="text-lg font-bold">📥 Importar residentes</h3>
+        <button id="impCerrar" class="ml-auto text-slate-400 hover:text-slate-100 text-xl leading-none">✕</button>
+      </div>
+      <div class="text-sm text-slate-300 space-y-1">
+        <p>Sube un Excel (<b>.xlsx</b>) o <b>.csv</b> con las columnas <b>Cédula, Nombre, Mz, Villa, Estado de pago y Celular</b>
+          (obligatorios: Nombre, Mz, Villa y Celular).
+          <a href="/api/residentes/plantilla.xlsx" class="text-indigo-300 underline">Descargar plantilla</a></p>
+        <p class="text-slate-400">Primero se <b>revisa</b> el archivo y te muestro qué pasaría; no se guarda nada hasta que confirmes.
+          Volver a subirlo actualiza a las personas (no las duplica). Las casas que no están en el archivo no se tocan.</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-3">
+        <input id="impArchivo" type="file" accept=".xlsx,.xlsm,.csv" class="text-sm text-slate-300" />
+        <button id="impRevisar" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm disabled:opacity-40" disabled>Revisar archivo</button>
+      </div>
+      <p id="impError" class="hidden text-sm text-red-300"></p>
+      <div id="impResultado" class="hidden space-y-3"></div>
+      <div class="flex justify-end gap-2">
+        <button id="impConfirmar" class="hidden px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 font-semibold text-sm">Confirmar e importar</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+let residentes = [];
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function norm(s) { return (s ?? '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+function claveCasa(c) { return (c || '').toLowerCase().split(/\s+/).filter(Boolean).join(' '); }
+function aviso(texto, ok) {
+  const m = $('msg'); m.textContent = texto; m.className = 'col-span-2 md:col-span-5 text-sm ' + (ok ? 'text-green-300' : 'text-red-300');
+}
+
+function render() {
+  const q = norm($('buscar').value).trim(), f = $('filtro').value;
+  const lista = residentes
+    .filter(r => !q || q.split(/\s+/).every(t => norm(`${r.casa} ${r.nombre} ${r.cedula} ${r.telefono}`).includes(t)))
+    .filter(r => !f || (f === 'impago' ? !r.al_dia : r.al_dia))
+    .sort((a, b) => a.casa.localeCompare(b.casa, 'es', { numeric: true }));
+  $('cnt').textContent = residentes.length;
+  const casasImpagas = new Set(residentes.filter(r => !r.al_dia).map(r => claveCasa(r.casa))).size;
+  const casasTotal = new Set(residentes.map(r => claveCasa(r.casa))).size;
+  $('chips').innerHTML =
+    `<span class="px-2 py-0.5 rounded bg-slate-700">${casasTotal} casas</span>` +
+    `<span class="px-2 py-0.5 rounded bg-green-900 text-green-300">${casasTotal - casasImpagas} al día</span>` +
+    `<span class="px-2 py-0.5 rounded ${casasImpagas ? 'bg-red-900 text-red-300' : 'bg-slate-700 text-slate-400'}">${casasImpagas} impagas</span>`;
+  $('tbody').innerHTML = lista.map(r => {
+    const quien = r.pago_actualizado ? `Actualizado por ${esc(r.pago_actualizado_por)} el ${esc(r.pago_actualizado.replace('T', ' '))}` : 'Sin cambios registrados';
+    return `<tr class="border-t border-slate-800 hover:bg-slate-800/60">
+      <td class="px-3 py-2 font-semibold whitespace-nowrap">🏠 ${esc(r.casa)}</td>
+      <td class="px-3 py-2">${esc(r.nombre) || '<span class="text-slate-500">—</span>'}</td>
+      <td class="px-3 py-2 whitespace-nowrap text-slate-300">${esc(r.cedula) || '<span class="text-slate-500">—</span>'}</td>
+      <td class="px-3 py-2 whitespace-nowrap">${r.telefono ? '+' + esc(r.telefono) : '<span class="text-amber-400 text-xs">sin celular</span>'}</td>
+      <td class="px-3 py-2"><button data-casa="${esc(r.casa)}" data-aldia="${r.al_dia ? 1 : 0}" title="${quien}"
+        class="pago text-xs px-3 py-1 rounded-full font-semibold whitespace-nowrap ${r.al_dia ? 'bg-green-700 hover:bg-green-600' : 'bg-red-700 hover:bg-red-600'}">${r.al_dia ? '✅ Al día' : '⛔ Impago'}</button></td>
+      <td class="px-3 py-2 text-right"><button data-id="${r.id}" class="borrar text-xs px-2 py-1 rounded bg-slate-700 hover:bg-red-600">Eliminar</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="px-3 py-6 text-slate-500">Sin residentes</td></tr>';
+}
+
+async function cargar() {
+  residentes = await (await fetch('/api/residentes')).json();
+  render();
+}
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const casa = `Mz ${$('mz').value.trim()} Villa ${$('villa').value.trim()}`;
+  const res = await fetch('/api/residentes', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telefono: $('telefono').value, casa, nombre: $('nombre').value.trim() || null }),
+  });
+  const data = await res.json();
+  if (!res.ok) return aviso(data.detail || 'Error al guardar', false);
+  aviso(`Guardado: ${data.casa} · +${data.telefono}`, true);
+  $('form').reset(); $('mz').focus();
+  cargar();
+};
+
+$('tbody').onclick = async e => {
+  const p = e.target.closest('.pago');
+  if (p) {
+    const casa = p.dataset.casa, estabaAlDia = p.dataset.aldia === '1';
+    if (estabaAlDia && !confirm(`¿Marcar la casa ${casa} como IMPAGA?\nDejará de poder recibir visitas (aplica a todos sus celulares).`)) return;
+    const res = await fetch('/api/casas/pago', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ casa, al_dia: !estabaAlDia }),
+    });
+    if (!res.ok) aviso((await res.json()).detail || 'Error al cambiar el estado', false);
+    else aviso(`${casa}: ${!estabaAlDia ? 'al día ✅' : 'impaga ⛔'}`, true);
+    return cargar();
+  }
+  const b = e.target.closest('.borrar'); if (!b) return;
+  const r = residentes.find(x => String(x.id) === b.dataset.id);
+  if (!confirm(`¿Eliminar a ${r ? (r.nombre || 'este residente') + ' (' + r.casa + ')' : ''}?\nDejará de poder pre-autorizar por WhatsApp. Sus visitas ya registradas se conservan.`)) return;
+  const res = await fetch('/api/residentes/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' });
+  if (!res.ok) return aviso((await res.json()).detail || 'Error al eliminar', false);
+  cargar();
+};
+
+// ---------- importar residentes ----------
+let impArchivo = null;
+const impError = t => { $('impError').textContent = t || ''; $('impError').classList.toggle('hidden', !t); };
+const chip = (txt, cls = 'bg-slate-700') => `<span class="px-2 py-1 rounded ${cls}">${txt}</span>`;
+
+function impResumen(d, aplicado) {
+  const r = d.resumen;
+  let h = `<div class="flex flex-wrap gap-2 text-xs">
+    ${chip(`${r.filas_leidas} filas leídas`)}${chip(`${r.filas_validas} válidas`, 'bg-green-900 text-green-300')}
+    ${r.filas_con_error ? chip(`${r.filas_con_error} con error (se omiten)`, 'bg-red-900 text-red-300') : ''}
+    ${chip(`${r.residentes_nuevos} residentes ${aplicado ? 'nuevos' : 'por agregar'}`)}${chip(`${r.residentes_actualizados} ${aplicado ? 'actualizados' : 'por actualizar'}`)}
+    ${chip(`${r.casas_en_archivo} casas (${r.casas_nuevas} nuevas)`)}${chip(`${r.casas_al_dia} al día`, 'bg-green-900 text-green-300')}${chip(`${r.casas_impagas} impagas`, r.casas_impagas ? 'bg-red-900 text-red-300' : 'bg-slate-700')}
+    ${r.cambios_de_pago ? chip(`${r.cambios_de_pago} cambian su estado de pago`, 'bg-amber-900 text-amber-200') : ''}</div>`;
+  if (d.cambios_de_pago.length) {
+    h += `<details class="text-sm"><summary class="cursor-pointer text-amber-300">Cambios en el estado de pago (${r.cambios_de_pago})</summary>
+      <ul class="mt-1 text-slate-300 max-h-40 overflow-y-auto">${d.cambios_de_pago.map(c => `<li>${esc(c.casa)}: ${c.de} → <b>${c.a}</b></li>`).join('')}</ul></details>`;
+  }
+  if (d.avisos.length) {
+    h += `<details class="text-sm"><summary class="cursor-pointer text-amber-300">Avisos (${d.avisos.length})</summary>
+      <ul class="mt-1 text-slate-300 max-h-40 overflow-y-auto">${d.avisos.map(a => `<li>Fila ${a.fila}: ${esc(a.motivo)}</li>`).join('')}</ul></details>`;
+  }
+  if (d.errores.length) {
+    h += `<details class="text-sm" open><summary class="cursor-pointer text-red-300">Filas con error (${d.errores_total}${d.errores_total > d.errores.length ? ', se muestran ' + d.errores.length : ''})</summary>
+      <ul class="mt-1 text-red-200 max-h-48 overflow-y-auto">${d.errores.map(e => `<li>Fila ${e.fila}: ${esc(e.motivo)}</li>`).join('')}</ul></details>`;
+  }
+  return h;
+}
+
+async function impEnviar(aplicar) {
+  impError('');
+  const fd = new FormData(); fd.append('archivo', impArchivo);
+  const res = await fetch('/api/residentes/importar?aplicar=' + aplicar, { method: 'POST', body: fd });
+  const data = await res.json();
+  if (!res.ok) { impError(typeof data.detail === 'string' ? data.detail : 'No se pudo procesar el archivo'); return null; }
+  return data;
+}
+
+$('btnImportar').onclick = () => { $('modalImp').classList.remove('hidden'); };
+$('impCerrar').onclick = () => $('modalImp').classList.add('hidden');
+$('impArchivo').onchange = e => {
+  impArchivo = e.target.files[0] || null;
+  $('impRevisar').disabled = !impArchivo;
+  $('impConfirmar').classList.add('hidden'); $('impResultado').classList.add('hidden'); impError('');
+};
+$('impRevisar').onclick = async () => {
+  $('impRevisar').disabled = true; $('impRevisar').textContent = 'Revisando…';
+  const d = await impEnviar(false);
+  $('impRevisar').disabled = false; $('impRevisar').textContent = 'Revisar archivo';
+  if (!d) return;
+  $('impResultado').innerHTML = `<p class="text-sm text-slate-400">Revisión (aún no se guardó nada):</p>` + impResumen(d, false);
+  $('impResultado').classList.remove('hidden');
+  $('impConfirmar').classList.toggle('hidden', d.resumen.filas_validas === 0);
+  $('impConfirmar').textContent = `Confirmar e importar ${d.resumen.filas_validas} fila(s)`;
+};
+$('impConfirmar').onclick = async () => {
+  if (!confirm('¿Importar ahora? Se guardarán las filas válidas y se actualizarán los estados de pago indicados.')) return;
+  $('impConfirmar').disabled = true;
+  const d = await impEnviar(true);
+  $('impConfirmar').disabled = false;
+  if (!d) return;
+  $('impResultado').innerHTML = `<p class="text-green-300 font-semibold">✅ Importación realizada</p>` + impResumen(d, true);
+  $('impConfirmar').classList.add('hidden'); $('impArchivo').value = ''; impArchivo = null; $('impRevisar').disabled = true;
+  cargar();
+};
+
+$('buscar').addEventListener('input', render);
+$('filtro').addEventListener('change', render);
+cargar();
+</script>
+</body>
+</html>
