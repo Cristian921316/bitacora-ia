@@ -1,0 +1,19 @@
+# Caddy: HTTPS automático (Let's Encrypt) y proxy hacia la app.
+# {$DOMINIO} viene del archivo .env (ej. bitacora.midominio.com)
+{$DOMINIO} {
+	encode zstd gzip
+
+	# El webhook de WhatsApp es solo interno (Evolution llama a la app por la red de Docker): no se expone a internet
+	@webhook path /api/whatsapp/webhook
+	respond @webhook 404
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy app:8000
+}

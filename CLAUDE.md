@@ -82,6 +82,18 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - La garita usa la hora del servidor (`/api/config`) para los «hace N min» y las vigencias, no la del navegador.
 - Limitación conocida: «mañana viene X» se vence a las 12 h porque la fecha de la visita no se extrae del mensaje.
 
+## Despliegue (VPS con Docker)
+- Guía paso a paso: `docs/DESPLIEGUE.md`. Archivos: `Dockerfile`, `docker-compose.prod.yml`, `deploy/Caddyfile`,
+  `.env.prod.example`, `requirements.lock` (versiones exactas probadas; las directas coinciden con las que funcionaron con
+  OpenAI real, p. ej. `openai==2.48.0`).
+- Stack: Caddy (HTTPS automático) + app (FastAPI + SQLite en el volumen `/data`) + Evolution API (+ su Postgres y Redis).
+  Solo se publican 80/443; Evolution queda en `127.0.0.1` y el webhook de WhatsApp es solo interno (Caddy lo bloquea).
+- Scripts (en el servidor): `scripts/whatsapp.sh` (crear/qr/estado/salir), `scripts/respaldo.sh`, `scripts/restaurar.sh`.
+  Ninguno borra archivos; la restauración usa la API de respaldo de SQLite y guarda antes el estado actual.
+- La app corre con `--proxy-headers` (IP real detrás de Caddy, necesaria para el bloqueo de login por IP), un solo proceso,
+  usuario sin privilegios y `TZ=America/Guayaquil`.
+- Pendiente: compilar Tailwind en vez de usar el CDN; respaldo automático (el script existe, falta activar el cron).
+
 ## Base de datos y migración a una más robusta
 - Hoy SQLite (`bitacora.db`, modo WAL). Para cambiar de motor basta `DATABASE_URL=postgresql://usuario:clave@servidor:5432/bitacora`:
   el código usa SQLAlchemy Core y el esquema lo crea Alembic (`init_db()` corre en cada arranque).

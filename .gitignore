@@ -16,3 +16,5 @@ backups/
 *.db-shm
 *.db
 .DS_Store
+respaldos-copia/
+respaldos-servidor/

@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+.venv
+__pycache__
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+backups
+tests
+docs
+.pytest_cache
+.DS_Store
+qr.png
+docker-compose*.yml
