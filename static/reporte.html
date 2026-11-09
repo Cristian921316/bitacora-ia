@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reporte · Bitácora</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <script src="/assets/nav.js"></script>
+  <header class="flex flex-wrap items-center gap-3 px-4 py-3 bg-slate-800 shadow">
+    <h1 class="text-xl font-bold whitespace-nowrap">📋 Reporte de bitácora</h1>
+    <a id="descargar" href="#" class="ml-auto text-sm px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 font-semibold whitespace-nowrap">⬇ Descargar Excel (.xlsx)</a>
+    <a id="descargarCsv" href="#" class="text-xs text-slate-400 hover:text-slate-200 underline whitespace-nowrap">CSV</a>
+  </header>
+
+  <section class="p-4 flex flex-wrap items-end gap-3 bg-slate-850">
+    <label class="text-xs text-slate-400">Vista
+      <select id="vista" class="block mt-1 rounded bg-slate-800 border border-slate-600 px-2 py-1.5 text-sm text-slate-100">
+        <option value="visitas">Por visita (una fila por visita)</option>
+        <option value="movimientos">Movimientos (registros, ingresos y salidas en orden)</option>
+        <option value="bloqueos">Intentos bloqueados (casas que no pueden recibir visitas)</option>
+      </select>
+    </label>
+    <label class="text-xs text-slate-400">Desde
+      <input id="desde" type="date" class="block mt-1 rounded bg-slate-800 border border-slate-600 px-2 py-1.5 text-sm text-slate-100" />
+    </label>
+    <label class="text-xs text-slate-400">Hasta
+      <input id="hasta" type="date" class="block mt-1 rounded bg-slate-800 border border-slate-600 px-2 py-1.5 text-sm text-slate-100" />
+    </label>
+    <div class="flex gap-1">
+      <button data-rango="0" class="rango text-xs px-2 py-1.5 rounded bg-slate-700 hover:bg-slate-600">Hoy</button>
+      <button data-rango="6" class="rango text-xs px-2 py-1.5 rounded bg-slate-700 hover:bg-slate-600">7 días</button>
+      <button data-rango="29" class="rango text-xs px-2 py-1.5 rounded bg-slate-700 hover:bg-slate-600">30 días</button>
+    </div>
+    <label class="text-xs text-slate-400">Estado
+      <select id="estado" class="block mt-1 rounded bg-slate-800 border border-slate-600 px-2 py-1.5 text-sm text-slate-100"></select>
+    </label>
+    <label class="text-xs text-slate-400 flex-1 min-w-[220px]">Buscar
+      <input id="q" type="search" autocomplete="off" placeholder="Mz 6 Villa 23, nombre, placa, texto del audio…"
+        class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 focus:border-indigo-400 focus:outline-none px-3 py-1.5 text-sm placeholder-slate-500" />
+    </label>
+  </section>
+
+  <div class="px-4 pb-2 text-sm text-slate-400" id="resumen">Cargando…</div>
+
+  <div class="px-4 pb-6 overflow-x-auto">
+    <table class="w-full text-sm border-collapse">
+      <thead id="thead" class="text-left text-xs uppercase text-slate-400 sticky top-0 bg-slate-900"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+<script>
+const VISTAS = {
+  visitas: {
+    estados: [['', 'Todos'], ['PRE_AUTORIZADO', 'Pre-autorizado'], ['ADENTRO', 'Ingresó / adentro'], ['SALIO', 'Salió'],
+              ['PENDIENTE', 'Esperando autorización'], ['RECHAZADO', 'Rechazado por residente'],
+              ['VENCIDA', 'Vencida (no llegó a tiempo)']],
+    cols: [
+      ['Registro', r => fecha(r.fecha_hora)], ['Casa', r => r.casa], ['Visitante', r => r.nombre_visitante],
+      ['Tipo', r => r.tipo], ['Placa', r => r.placa], ['Estado', r => r.estado],
+      ['Autorización', r => r.respondido_por ? fecha(r.hora_respuesta) : ''],
+      ['Ingreso', r => fecha(r.hora_ingreso)], ['Salida', r => fecha(r.hora_salida)],
+      ['Permanencia', r => r.permanencia_min == null ? '' : r.permanencia_min + ' min'],
+      ['Origen', r => r.origen], ['Petición', r => r.transcripcion, true],
+    ],
+  },
+  movimientos: {
+    estados: [['', 'Todos'], ['REGISTRADO', 'Registrado'], ['SOLICITUD', 'Solicitud sin aviso'], ['AUTORIZADO', 'Autorizado por residente'],
+              ['RECHAZADO', 'Rechazado por residente'], ['INGRESO', 'Ingreso'], ['SALIDA', 'Salida']],
+    cols: [
+      ['Fecha y hora', r => fecha(r.fecha_hora)], ['Evento', r => r.evento], ['Casa', r => r.casa],
+      ['Visitante', r => r.nombre_visitante], ['Tipo', r => r.tipo], ['Placa', r => r.placa],
+      ['Autorizado por', r => r.autorizado_por], ['Origen', r => r.origen], ['Usuario', r => r.usuario],
+    ],
+  },
+  bloqueos: {
+    estados: [['', 'Todos']],
+    cols: [
+      ['Fecha y hora', r => fecha(r.fecha_hora)], ['Casa', r => r.casa], ['Origen', r => r.origen],
+      ['Teléfono', r => r.telefono], ['Usuario', r => r.usuario], ['Detalle', r => r.detalle, true], ['Motivo', r => r.motivo],
+    ],
+  },
+};
+const COLOR = { PRE_AUTORIZADO: 'text-amber-300', ADENTRO: 'text-green-300', SALIO: 'text-slate-400',
+                PENDIENTE: 'text-purple-300', RECHAZADO: 'text-red-400', VENCIDA: 'text-slate-500', 'INGRESÓ': 'text-green-300',
+                REGISTRADO: 'text-amber-300', INGRESO: 'text-green-300', SALIDA: 'text-red-300',
+                SOLICITUD: 'text-purple-300', AUTORIZADO: 'text-green-300' };
+
+const $ = id => document.getElementById(id);
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fecha(f) { return f ? f.replace('T', ' ') : ''; }
+function iso(d) { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); }
+function hace(dias) { const d = new Date(); d.setDate(d.getDate() - dias); return iso(d); }
+
+function params() {
+  const p = new URLSearchParams({ vista: $('vista').value, desde: $('desde').value, hasta: $('hasta').value });
+  if ($('estado').value) p.set('estado', $('estado').value);
+  if ($('q').value.trim()) p.set('q', $('q').value.trim());
+  return p;
+}
+
+function cargarEstados() {
+  $('estado').innerHTML = VISTAS[$('vista').value].estados.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+}
+
+let timer = null, seq = 0;
+function pedir() { clearTimeout(timer); timer = setTimeout(cargar, 200); }
+
+async function cargar() {
+  const miSeq = ++seq, vista = $('vista').value, def = VISTAS[vista];
+  const p = params();
+  $('descargar').href = '/api/reporte.xlsx?' + p.toString();
+  $('descargarCsv').href = '/api/reporte.csv?' + p.toString();
+  let data;
+  try {
+    const res = await fetch('/api/reporte?' + p.toString());
+    if (!res.ok) throw new Error((await res.json()).detail || res.status);
+    data = await res.json();
+  } catch (e) { $('resumen').textContent = 'Error: ' + e.message; return; }
+  if (miSeq !== seq) return; // llegó una respuesta más vieja, se descarta
+
+  $('thead').innerHTML = '<tr>' + def.cols.map(c => `<th class="px-2 py-2 whitespace-nowrap border-b border-slate-700">${c[0]}</th>`).join('') + '</tr>';
+  $('tbody').innerHTML = data.filas.map(r => '<tr class="border-b border-slate-800 hover:bg-slate-800/60">' +
+    def.cols.map(([t, fn, largo]) => {
+      const v = fn(r) ?? '';
+      const color = (t === 'Estado' || t === 'Evento') ? (COLOR[v] || '') : '';
+      return largo
+        ? `<td class="px-2 py-1.5 max-w-xs truncate text-slate-400" title="${esc(v)}">${esc(v)}</td>`
+        : `<td class="px-2 py-1.5 whitespace-nowrap ${color}">${esc(v)}</td>`;
+    }).join('') + '</tr>').join('') ||
+    `<tr><td colspan="${def.cols.length}" class="px-2 py-6 text-slate-500">Sin registros para este filtro</td></tr>`;
+  const extra = data.total > data.filas.length ? ` · mostrando los ${data.filas.length} más recientes (el Excel trae todos)` : '';
+  $('resumen').textContent = `${data.total} registro(s)${extra}`;
+}
+
+$('vista').onchange = () => { cargarEstados(); pedir(); };
+['desde', 'hasta', 'estado'].forEach(id => $(id).onchange = pedir);
+$('q').addEventListener('input', pedir);
+document.querySelectorAll('.rango').forEach(b => b.onclick = () => {
+  $('desde').value = hace(+b.dataset.rango); $('hasta').value = hace(0); pedir();
+});
+
+$('desde').value = $('hasta').value = hace(0);
+cargarEstados(); cargar();
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ingresar · Bitácora</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+  <form id="form" class="w-full max-w-sm bg-slate-800 border border-slate-700 rounded-2xl p-6 space-y-4 shadow-xl">
+    <div class="text-center">
+      <div class="text-4xl">🛡️</div>
+      <h1 class="text-xl font-bold mt-1">Bitácora residencial</h1>
+      <p class="text-sm text-slate-400">Ingresa con tu usuario</p>
+    </div>
+    <label class="block text-xs text-slate-400">Usuario
+      <input id="usuario" required autocomplete="username" autocapitalize="none" autofocus
+        class="block w-full mt-1 rounded-lg bg-slate-900 border border-slate-600 focus:border-indigo-400 focus:outline-none px-3 py-2 text-sm text-slate-100" />
+    </label>
+    <label class="block text-xs text-slate-400">Contraseña
+      <input id="clave" type="password" required autocomplete="current-password"
+        class="block w-full mt-1 rounded-lg bg-slate-900 border border-slate-600 focus:border-indigo-400 focus:outline-none px-3 py-2 text-sm text-slate-100" />
+    </label>
+    <p id="msg" class="text-sm text-red-300 hidden"></p>
+    <button id="btn" class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold">Ingresar</button>
+  </form>
+
+<script>
+const $ = id => document.getElementById(id);
+function destinoSeguro(next, defecto) {
+  // solo rutas internas ("/algo"); nunca otro sitio
+  return next && next.startsWith('/') && !next.startsWith('//') ? next : defecto;
+}
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  $('btn').disabled = true; $('msg').classList.add('hidden');
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario: $('usuario').value, clave: $('clave').value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'No se pudo ingresar');
+    const next = new URLSearchParams(location.search).get('next');
+    location.href = data.debe_cambiar_clave ? '/clave' : destinoSeguro(next, data.destino);
+  } catch (err) {
+    $('msg').textContent = err.message; $('msg').classList.remove('hidden');
+    $('clave').value = ''; $('clave').focus();
+  } finally { $('btn').disabled = false; }
+};
+</script>
+</body>
+</html>

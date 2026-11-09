@@ -8,3 +8,11 @@ __pycache__/
 
 # Base de datos local
 bitacora.db
+qr.png
+
+# Respaldos y archivos auxiliares de SQLite
+backups/
+*.db-wal
+*.db-shm
+*.db
+.DS_Store
