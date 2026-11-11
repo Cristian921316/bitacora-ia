@@ -53,6 +53,12 @@ def wsp(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def sin_admins_del_env(monkeypatch):
+    """Las pruebas no deben depender de los números reales que haya en el .env local."""
+    monkeypatch.setattr(main.config, "ADMIN_TELEFONOS", "")
+
+
+@pytest.fixture(autouse=True)
 def openai_falso(monkeypatch):
     class Falso:
         def __init__(self, api_key=None):
