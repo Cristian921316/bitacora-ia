@@ -136,17 +136,18 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
   residente puede seguir anunciando visitas. Un número que no está en la lista nunca recibe el resumen.
 - En producción: agregar `ADMIN_TELEFONOS` al `.env` del servidor y `docker compose up -d`.
 
-## Estado de ramas y despliegue (actualizado 2026-11-10)
-- `main` (GitHub, repo PÚBLICO) = piloto + paquete de despliegue (PR #1 y #2).
-- Rama `ajustes-importador-residentes` → PR #3 (importador relajado, edición en línea, migración 0005, visita sin aviso con casa/mora/
-  búsqueda tolerante, resumen por WhatsApp para admins). `serverRun.txt` NUNCA se sube (ruta local del Mac). 97 pruebas pasan.
-- Despliegue de esa rama en el servidor (una sola vez): `./scripts/respaldo.sh` → (PR unido) → `git pull` → agregar `ADMIN_TELEFONOS=...`
-  al `.env` → `docker compose up -d --build` (la migración 0005 se aplica sola) → `./scripts/whatsapp.sh estado` (la vinculación persiste)
-  → probar «reporte de hoy» → cargar la lista real con «Revisar archivo» antes de confirmar.
-- Reversa: `git checkout <commit_anterior>` + `docker compose up -d --build`; si hubo migración, restaurar el respaldo previo.
-- Producción: droplet DigitalOcean NYC (2 vCPU / 2 GB, se recomienda 4 GB), https://192-241-185-79.sslip.io (dominio de prueba),
-  SQLite en el volumen `app_data`, Evolution + su Postgres/Redis. Sin hacer aún: respaldo nocturno (cron), subir a 4 GB, endurecer SSH,
-  borrar ADMIN_PASSWORD del .env, monitor externo de /salud, dominio propio.
+## Estado de ramas y despliegue (actualizado 2026-11-11)
+- `main` (GitHub, repo PÚBLICO) incluye el piloto, el paquete de despliegue y el PR #3 (importador relajado, edición en línea, migración 0005,
+  visita sin aviso con casa/mora/búsqueda tolerante, resumen por WhatsApp para admins). 97 pruebas pasan. `serverRun.txt` NUNCA se sube.
+- **PRODUCCIÓN YA DESPLEGADA con el PR #3**, con dominio propio (subdominio `bitacora.` de un dominio en Hostinger, registro A → IP del droplet;
+  el dominio concreto va solo en el `.env` del servidor, no en el repo público). WhatsApp re-vinculado con QR nuevo y funcionando;
+  `ADMIN_TELEFONOS` configurado y probado. El dominio `sslip.io` se dejó porque algunos equipos lo bloqueaban.
+- Para futuras actualizaciones: `./scripts/respaldo.sh` → `git pull` → `docker compose up -d --build` → `docker compose ps` y logs →
+  `./scripts/whatsapp.sh estado`. Cambiar de dominio = editar `DOMINIO` en el `.env` + `docker compose up -d` (los usuarios deben volver a entrar).
+  Reversa: `git checkout <commit_anterior>` + `docker compose up -d --build`; si hubo migración, restaurar el respaldo previo.
+- Producción: droplet DigitalOcean NYC (2 vCPU / 2 GB, se recomienda 4 GB), SQLite en el volumen `app_data`, Evolution + su Postgres/Redis.
+- Sin hacer aún: cargar la lista real en producción («Revisar archivo» y confirmar, con respaldo antes), respaldo nocturno (cron),
+  subir a 4 GB, endurecer SSH, borrar ADMIN_PASSWORD del .env, monitor externo de /salud, snapshots del proveedor.
 
 ## Entorno local y precauciones
 - La base local (`bitacora.db`) tiene la lista REAL (784 residentes, 467 con celular) y WhatsApp local vinculado a un número propio:
