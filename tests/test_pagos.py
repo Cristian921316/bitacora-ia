@@ -45,8 +45,10 @@ def test_guardia_no_puede_registrar_visita_sin_aviso_en_casa_impaga(admin, guard
     registrar(admin)
     admin.post("/api/casas/pago", json={"casa": CASA, "al_dia": False})
     r = guardia.post("/api/visita-sin-aviso", json={"mz": "6", "villa": "23", "nombre_visitante": "Ana"})
-    assert r.status_code == 409 and "administración" in r.json()["detail"].lower()
-    assert "pago" not in r.json()["detail"].lower()
+    assert r.status_code == 409 and "no está al día" in r.json()["detail"] and "Debe comunicarse con administración" in r.json()["detail"]
+    c = guardia.get("/api/casa/residentes", params={"mz": "6", "villa": "23"}).json()   # la pantalla lo avisa antes de enviar
+    assert c["bloqueada"] is True and c["residentes"] == [] and "no está al día" in c["mensaje"]
+    assert "593988391178" not in str(c) and "Juan" not in str(c)
     assert wsp == []                                            # al residente no se le molesta
     b = admin.get("/api/reporte?vista=bloqueos").json()["filas"][0]
     assert b["usuario"] == "guardia1" and b["origen"] == "garita" and "Ana" in b["detalle"]
@@ -73,6 +75,8 @@ def test_el_bloqueo_se_puede_desactivar(admin, guardia, wsp, monkeypatch):
     assert texto(admin, "593988391178", "Hoy viene Juan Pérez")["registros"] == 1
 
 
-def test_casa_desconocida_no_se_bloquea(guardia, wsp):
+def test_casa_inexistente_no_se_puede_registrar(guardia, wsp):
     r = guardia.post("/api/visita-sin-aviso", json={"mz": "9", "villa": "99", "nombre_visitante": "Nadie"})
-    assert r.status_code == 200 and r.json()["residentes_avisados"] == 0
+    assert r.status_code == 400 and "No existe la casa" in r.json()["detail"] and wsp == []
+    c = guardia.get("/api/casa/residentes", params={"mz": "9", "villa": "99"}).json()
+    assert c["existe"] is False and c["residentes"] == [] and c["sugerencias"] == []

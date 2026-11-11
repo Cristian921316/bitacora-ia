@@ -45,11 +45,12 @@
   <div id="modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
     <form id="formSinAviso" class="bg-slate-800 border border-slate-600 rounded-xl p-5 w-full max-w-md grid grid-cols-2 gap-3">
       <h3 class="col-span-2 text-lg font-bold">➕ Visita sin aviso</h3>
-      <p class="col-span-2 text-xs text-slate-400 -mt-1">Se le preguntará por WhatsApp al residente si autoriza el ingreso.</p>
+      <p class="col-span-2 text-xs text-slate-400 -mt-1">Escribe la manzana y la villa: te muestro quién vive ahí para que confirmes con el visitante.</p>
       <label class="text-xs text-slate-400">Manzana
-        <input id="saMz" required maxlength="10" placeholder="6" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+        <input id="saMz" required maxlength="50" placeholder="6" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
       <label class="text-xs text-slate-400">Villa
-        <input id="saVilla" required maxlength="10" placeholder="23" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+        <input id="saVilla" required maxlength="50" placeholder="23" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
+      <div id="saCasa" class="col-span-2 hidden"></div>
       <label class="col-span-2 text-xs text-slate-400">Nombre del visitante
         <input id="saNombre" required maxlength="80" placeholder="Juan Pérez" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
       <label class="text-xs text-slate-400">Tipo
@@ -63,7 +64,7 @@
         <input id="saObs" maxlength="200" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm" /></label>
       <div class="col-span-2 flex justify-end gap-2 mt-1">
         <button type="button" id="saCancelar" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm">Cancelar</button>
-        <button class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold text-sm">Preguntar al residente</button>
+        <button id="saEnviar" disabled class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold text-sm opacity-50">Preguntar al residente</button>
       </div>
     </form>
   </div>
@@ -138,11 +139,12 @@ function filaEspera(r) {
         <div class="text-xs text-red-300 truncate">${base} · El residente NO autorizó · hace ${minutos(r.hora_respuesta)} min</div>
       </div></li>`;
   }
+  const aQuien = ((r.autorizado_por || '').match(/se preguntó a (.+)\)$/) || [])[1];
   return `<li class="bg-slate-800 rounded-lg px-3 py-2 flex items-center gap-3 border border-purple-500">
     <div class="text-xl leading-none">⏳</div>
     <div class="flex-1 min-w-0 leading-tight">
       <div class="font-semibold text-sm truncate">${esc(r.nombre_visitante)}</div>
-      <div class="text-xs text-purple-300 truncate">${base} · esperando respuesta · hace ${minutos(r.fecha_hora)} min</div>
+      <div class="text-xs text-purple-300 truncate">${base} · esperando respuesta${aQuien ? ' de ' + esc(aQuien) : ''} · hace ${minutos(r.fecha_hora)} min</div>
     </div>
     <div class="flex flex-col gap-1 shrink-0">
       <button onclick="ingresarIgual(${r.id})" class="px-2 py-1 rounded-md text-xs font-semibold bg-amber-600 hover:bg-amber-500 whitespace-nowrap">Ingresar igual</button>
@@ -263,24 +265,112 @@ function conectarWS() {
 
 // --- Visita sin aviso ---
 const modal = document.getElementById('modal'), formSA = document.getElementById('formSinAviso');
-document.getElementById('btnSinAviso').onclick = () => { modal.classList.remove('hidden'); document.getElementById('saMz').focus(); };
+const sa = id => document.getElementById(id);
+let saTimer = null, saInfo = null;   // saInfo = lo que la API dijo de la casa escrita (null = aún no se sabe)
+
+function saSeleccionados() { return [...sa('saCasa').querySelectorAll('input.sa-res:checked')].map(c => +c.value); }
+function saIgual() { const c = sa('saIgual'); return !!(c && c.checked); }
+
+// El botón dice a quién se va a preguntar y solo se activa cuando hay una decisión clara
+function saBoton() {
+  const b = sa('saEnviar'); let texto = 'Preguntar al residente', ok = true;
+  if (!saInfo || saInfo.cargando || saInfo.bloqueada || !saInfo.existe) ok = false;
+  else if (saInfo.hay_avisables) {
+    const ids = saSeleccionados();
+    if (!ids.length) { ok = false; texto = 'Elige a quién preguntar'; }
+    else {
+      const nombres = saInfo.residentes.filter(r => ids.includes(r.id)).map(r => r.nombre);
+      texto = ids.length === 1 ? 'Preguntar a ' + nombres[0] : `Preguntar a ${ids.length} personas`;
+    }
+  } else { texto = 'Registrar sin avisar'; ok = saIgual(); }
+  b.textContent = texto; b.disabled = !ok; b.classList.toggle('opacity-50', !ok);
+}
+
+function saLimpiar() {
+  clearTimeout(saTimer); saInfo = null;
+  sa('saCasa').className = 'col-span-2 hidden'; sa('saCasa').innerHTML = ''; saBoton();
+}
+
+const saCasillaIgual = txt => `<label class="flex items-center gap-2 mt-2 text-amber-200 text-xs"><input type="checkbox" id="saIgual"> ${txt}</label>`;
+
+function saPintar(d) {
+  const p = sa('saCasa');
+  const avisables = d.residentes.filter(r => r.avisable);
+  saInfo = { ...d, hay_avisables: avisables.length > 0 };
+  if (d.bloqueada) {
+    p.className = 'col-span-2 rounded-lg border border-red-500 bg-red-950/40 px-3 py-2 text-sm';
+    p.innerHTML = `<div class="font-semibold text-red-300">🚫 ${esc(d.mensaje)}</div>`;
+  } else if (d.residentes.length) {
+    p.className = 'col-span-2 rounded-lg border border-green-600 bg-green-950/40 px-3 py-2 text-sm';
+    p.innerHTML = `<div class="font-semibold text-green-300">🏠 ${esc(d.casa)} · ¿A quién va a visitar?</div>
+      <div class="mt-1 space-y-1">${d.residentes.map(r => `<label class="flex items-center gap-2 ${r.avisable ? '' : 'opacity-60'}">
+        <input type="checkbox" class="sa-res" value="${r.id}" ${r.avisable ? 'checked' : 'disabled'}> <span class="font-medium">${esc(r.nombre)}</span>
+        ${r.avisable ? '' : '<span class="text-xs text-amber-300">(sin celular: no se le puede avisar)</span>'}</label>`).join('')}</div>
+      <div class="text-xs text-slate-400 mt-1">Confirma con el visitante que va a ver a esta persona.</div>` +
+      (avisables.length ? '' : saCasillaIgual('Registrar igual: nadie de esta casa puede recibir el aviso por WhatsApp'));
+  } else if (d.sugerencias.length) {
+    p.className = 'col-span-2 rounded-lg border border-amber-500 bg-amber-950/40 px-3 py-2 text-sm';
+    p.innerHTML = `<div class="font-semibold text-amber-300">Hay ${d.sugerencias.length} casas que coinciden con ${esc(d.casa)}.</div>
+      <div class="text-xs text-slate-300 mt-1">Toca la correcta:</div>` +
+      d.sugerencias.map((x, i) => `<button type="button" data-i="${i}" class="sa-sug block w-full text-left mt-1 rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 text-xs">
+        Mz ${esc(x.mz)} · Villa ${esc(x.villa)} — ${x.bloqueada ? '🚫 el residente no está al día, debe comunicarse con administración' : esc(x.residentes.join(', '))}</button>`).join('');
+  } else {
+    p.className = 'col-span-2 rounded-lg border border-red-500 bg-red-950/40 px-3 py-2 text-sm';
+    p.innerHTML = `<div class="font-semibold text-red-300">No existe la casa ${esc(d.casa)}.</div>
+      <div class="text-xs text-slate-300 mt-1">Confirma con el visitante la manzana y la villa: sin una casa válida no se puede registrar.</div>`;
+  }
+  saBoton();
+}
+
+async function saBuscar(exacta) {
+  const mz = saMz.value.trim(), villa = saVilla.value.trim();
+  if (!mz || !villa) { saLimpiar(); return; }
+  saInfo = { cargando: true }; saBoton();
+  let d = null;
+  try {
+    const res = await fetch(`/api/casa/residentes?mz=${encodeURIComponent(mz)}&villa=${encodeURIComponent(villa)}${exacta === true ? '&exacta=1' : ''}`);
+    if (res.ok) d = await res.json();
+  } catch (e) { /* sin conexión */ }
+  if (saMz.value.trim() !== mz || saVilla.value.trim() !== villa) return;   // ya escribió otra cosa: respuesta vieja
+  if (!d) {   // no se pudo verificar la casa: no se puede registrar
+    saInfo = { existe: false, residentes: [], sugerencias: [] }; saBoton();
+    const p = sa('saCasa');
+    p.className = 'col-span-2 rounded-lg border border-red-500 bg-red-950/40 px-3 py-2 text-sm';
+    p.innerHTML = '<div class="font-semibold text-red-300">No se pudo verificar la casa. Revisa la conexión y vuelve a intentar.</div>';
+    return;
+  }
+  saPintar(d);
+}
+const saProgramar = () => { clearTimeout(saTimer); saInfo = null; saBoton(); saTimer = setTimeout(saBuscar, 350); };
+saMz.addEventListener('input', saProgramar); saVilla.addEventListener('input', saProgramar);
+
+sa('saCasa').addEventListener('change', saBoton);
+sa('saCasa').addEventListener('click', e => {
+  const b = e.target.closest('.sa-sug'); if (!b) return;
+  const x = saInfo.sugerencias[+b.dataset.i];
+  saMz.value = x.mz; saVilla.value = x.villa; saBuscar(true);
+});
+
+document.getElementById('btnSinAviso').onclick = () => { formSA.reset(); saLimpiar(); modal.classList.remove('hidden'); saMz.focus(); };
 document.getElementById('saCancelar').onclick = () => modal.classList.add('hidden');
 formSA.onsubmit = async e => {
   e.preventDefault();
+  if (!saInfo || saInfo.cargando || sa('saEnviar').disabled) return;
   const res = await fetch('/api/visita-sin-aviso', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       mz: saMz.value, villa: saVilla.value, nombre_visitante: saNombre.value, tipo: saTipo.value,
       placa: saPlaca.value || null, observaciones: saObs.value || null,
+      residente_ids: saInfo.hay_avisables ? saSeleccionados() : [],     // a quién se le pregunta; [] = registrar sin avisar
     }),
   });
   const data = await res.json();
-  if (!res.ok) { toast('❌ ' + (data.detail || 'Error al registrar'), false); return; }
-  modal.classList.add('hidden'); formSA.reset();
+  if (!res.ok) { toast('❌ ' + (typeof data.detail === 'string' ? data.detail : 'Error al registrar'), false); return; }
+  modal.classList.add('hidden'); formSA.reset(); saLimpiar();
   registros.set(data.registro.id, indexar(data.registro)); render();
-  toast(data.residentes_avisados
-    ? `📲 Se preguntó a ${data.residentes_avisados} residente(s) por WhatsApp`
-    : '⚠️ Esa casa no tiene residentes registrados con WhatsApp: confirma por otro medio', !!data.residentes_avisados);
+  toast(data.preguntado_a.length
+    ? `📲 Se preguntó a ${data.preguntado_a.join(', ')} por WhatsApp`
+    : '⚠️ Visita registrada sin avisar a nadie: confirma por otro medio', !!data.preguntado_a.length);
 };
 
 setInterval(render, 30000);  // refresca los "hace N min" y oculta lo que acaba de vencer

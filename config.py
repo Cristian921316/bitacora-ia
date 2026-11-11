@@ -36,3 +36,5 @@ EVOLUTION_URL = os.getenv("EVOLUTION_URL", "http://localhost:8080")
 EVOLUTION_APIKEY = os.getenv("EVOLUTION_APIKEY", "")
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "bitacora")
 WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN", "")
+# Celulares de administradores que pueden pedir el resumen por WhatsApp ("reporte de hoy"). Separados por coma.
+ADMIN_TELEFONOS = os.getenv("ADMIN_TELEFONOS", "")

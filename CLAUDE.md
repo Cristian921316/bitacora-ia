@@ -24,13 +24,13 @@ del residente por WhatsApp, reportes en Excel, login con 2 roles y estado de pag
 | `util.py` | Utilidades (normalizar celulares) |
 | `config.py` | Ajustes desde variables de entorno / `.env` |
 | `db.py` | Base de datos portable (SQLAlchemy Core): tablas, helpers y `init_db()` |
-| `alembic/` | Migraciones del esquema (`0001` base del piloto, `0002` usuarios/pagos, `0003` configuración, `0004` residentes con id/cédula/celular opcional) |
+| `alembic/` | Migraciones del esquema (`0001` base del piloto, `0002` usuarios/pagos, `0003` configuración, `0004` residentes con id/cédula/celular opcional, `0005` cédula sin unicidad y casa de hasta 200 caracteres) |
 | `auth.py` | Login, sesiones en BD, roles ADMIN / GUARDIA, gestión de usuarios |
 | `realtime.py` | WebSocket; al guardia se le envían solo los campos mínimos |
 | `reportes.py` | Reportes (solo ADMIN): pantalla, CSV y Excel |
 | `static/` | Pantallas HTML (Tailwind CDN + JS); `static/assets/nav.js` = menú según el rol |
 | `scripts/migrar_a_postgres.py` | Copia los datos de SQLite a PostgreSQL |
-| `tests/` | 55 pruebas automáticas (`pytest`, SQLite) |
+| `tests/` | 75 pruebas automáticas (`pytest`, SQLite) |
 | `docker-compose.yml` | Evolution API (WhatsApp no oficial) + Postgres + Redis propios de Evolution |
 
 ## Cómo correrlo
@@ -65,14 +65,23 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Sin control de salidas, el reporte muestra el estado como «INGRESÓ» (no se sabe si ya se fue). Encendiéndolo vuelven la columna
   «Adentro del Conjunto», el botón de salida y la alerta roja de quienes siguen adentro desde ayer.
 
-## Importar residentes
-- Residentes → **Importar residentes (Excel)**. Columnas: Cédula, Nombre, Mz, Villa, Estado de pago y **Celular** (obligatorios:
-  Nombre, Mz, Villa y Celular). Plantilla descargable. Acepta .xlsx y .csv (máx. 5 MB / 5000 filas).
-- Dos pasos: primero **revisa** (no guarda nada y muestra nuevos, actualizados, cambios de pago, errores y avisos por fila) y luego **confirma**.
-- Reconoce a la persona por cédula, luego por celular (no duplica al volver a subir). Solo agrega o actualiza: las casas que no
-  aparecen en el archivo no se tocan. El estado de pago es por casa; si hay estados distintos en una casa, queda IMPAGA.
-- Filas con error se omiten y se explican (celular repetido, cédula distinta para el mismo celular, estado no reconocido, etc.).
-- Excel quita ceros iniciales: las cédulas de 9 dígitos se completan y los celulares 9XXXXXXXX pasan a 593 9XXXXXXXX.
+## Importar y editar residentes
+- Residentes → **Importar residentes (Excel)**. Columnas: Cédula, Nombre, Mz, Villa, Estado de pago y Celular.
+  **Obligatorias: Nombre, Mz, Villa y Estado de pago** (una fila puede traer el estado vacío = «sin cambio»; una casa nueva queda al día).
+  **Cédula y Celular son opcionales y no se validan**: la cédula puede repetirse; un celular inservible (texto, muy corto o largo)
+  o repetido por otra persona se carga **sin celular** y deja un aviso. Mz y Villa admiten hasta 50 caracteres. Plantilla descargable.
+- Solo es error de fila: falta el nombre, la manzana o la villa, o un estado de pago ilegible (leerlo mal podría bloquear a una casa
+  que sí pagó). Dos pasos: **revisar** (no guarda nada) y **confirmar**. Las filas con error se omiten y se explican.
+- Cómo reconoce a una persona al volver a subir: por **celular con el mismo nombre**; si no hay celular, por **nombre + casa**
+  (si ya estaba sin celular y ahora lo trae, se le completa). La cédula NO identifica a nadie. Nunca se pisa a otra persona:
+  si el celular ya lo tiene alguien con otro nombre (pareja que comparte teléfono), la nueva persona se carga sin celular.
+- Solo agrega o actualiza: las casas que no aparecen en el archivo no se tocan. Estado de pago por casa: si hay estados distintos
+  en una casa, queda IMPAGA. Excel quita ceros iniciales: las cédulas de 9 dígitos se completan y los celulares 9XXXXXXXX pasan a 593 9XXXXXXXX.
+- **Edición en línea** en Residentes: clic en nombre, cédula, celular o casa; **Enter** guarda, **Esc** cancela, **Tab** pasa al siguiente
+  dato de la fila; la celda parpadea en verde (guardado) o rojo (error con el motivo). La casa se edita con dos casillas (Mz y Villa).
+  API: `PATCH /api/residentes/{id}` (cambios parciales; el celular se valida y no puede repetirse; vaciarlo lo quita).
+- El alta manual también admite celular vacío (se completa luego con un clic).
+- Pendiente: unificar `06` con `6` y `12A` con `12-A` (hoy son casas distintas).
 
 ## Vigencia de las visitas
 - Parámetro `vigencia_horas` (por defecto 12, editable en **Configuración**): una visita PRE_AUTORIZADA o PENDIENTE sin ingresar
@@ -112,12 +121,48 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - El micrófono del navegador solo funciona en `localhost` o HTTPS.
 - El `.env` y la base nunca se suben al repo.
 
+## Visita sin aviso (garita)
+- Es una ayuda para casos fortuitos (el 90 % lo anuncia el residente): hay que saber a QUIÉN se visita. Búsqueda por Mz y Villa tolerante
+  (1 = 01, 12A = 12-A). Una casa → sus residentes; sin casa que coincida NO se puede registrar (400); casa no al día → panel rojo
+  «El residente de … no está al día en sus pagos. Debe comunicarse con administración» (nunca la visita), sin nombres, envío bloqueado (409
+  y queda en «Intentos bloqueados»). «Registrar igual» solo si la casa existe pero nadie tiene celular válido. Sin conexión: no deja registrar.
+- La visita se guarda con la casa del residente elegido tal como está guardada; `resolver_solicitud` compara la casa sin distinguir mayúsculas.
+
+## Resumen por WhatsApp para administradores
+- `ADMIN_TELEFONOS` (.env, coma, ej. `0991234567,0987654321`) = celulares que pueden escribir o enviar nota de voz al número de la bitácora:
+  «reporte de hoy / de ayer / de la semana» (o solo «hoy», «ayer», «semana»). Responde solo cifras (visitas, ingresaron, rechazadas,
+  sin ingresar, sin aviso en garita, bloqueos, por tipo), sin nombres ni casas. Código: `resumen.py` + intercepción en el webhook.
+- Exige palabra de pedido (reporte/resumen/informe/cuántas…) para que «hoy viene Juan» siga siendo un anuncio; un admin que también es
+  residente puede seguir anunciando visitas. Un número que no está en la lista nunca recibe el resumen.
+- En producción: agregar `ADMIN_TELEFONOS` al `.env` del servidor y `docker compose up -d`.
+
+## Estado de ramas y despliegue (actualizado 2026-11-10)
+- `main` (GitHub, repo PÚBLICO) = piloto + paquete de despliegue (PR #1 y #2).
+- Rama `ajustes-importador-residentes` → PR #3 (importador relajado, edición en línea, migración 0005, visita sin aviso con casa/mora/
+  búsqueda tolerante, resumen por WhatsApp para admins). `serverRun.txt` NUNCA se sube (ruta local del Mac). 97 pruebas pasan.
+- Despliegue de esa rama en el servidor (una sola vez): `./scripts/respaldo.sh` → (PR unido) → `git pull` → agregar `ADMIN_TELEFONOS=...`
+  al `.env` → `docker compose up -d --build` (la migración 0005 se aplica sola) → `./scripts/whatsapp.sh estado` (la vinculación persiste)
+  → probar «reporte de hoy» → cargar la lista real con «Revisar archivo» antes de confirmar.
+- Reversa: `git checkout <commit_anterior>` + `docker compose up -d --build`; si hubo migración, restaurar el respaldo previo.
+- Producción: droplet DigitalOcean NYC (2 vCPU / 2 GB, se recomienda 4 GB), https://192-241-185-79.sslip.io (dominio de prueba),
+  SQLite en el volumen `app_data`, Evolution + su Postgres/Redis. Sin hacer aún: respaldo nocturno (cron), subir a 4 GB, endurecer SSH,
+  borrar ADMIN_PASSWORD del .env, monitor externo de /salud, dominio propio.
+
+## Entorno local y precauciones
+- La base local (`bitacora.db`) tiene la lista REAL (784 residentes, 467 con celular) y WhatsApp local vinculado a un número propio:
+  NO enviar solicitudes a casas reales; probar con una casa propia (p. ej. Mz 99 Villa 99 con un segundo teléfono).
+  Idea sin decidir: lista blanca de números en local.
+- Reiniciar el servidor local tras cambios de backend (uvicorn no recarga solo): una pantalla nueva con backend viejo parece «no encuentra».
+- La base usa WAL: copiarla con `sqlite3 bitacora.db ".backup 'destino'"`, NO con `cp` (sale desactualizada). Los scripts de producción ya usan la API correcta.
+- La lista real mezcla ceros iniciales en Mz/Villa (~40 % de las casas): la búsqueda es tolerante (06 = 6, 12A = 12-A = 12 a).
+- Pruebas: `pytest` en SQLite (rápidas). Postgres solo cuando el usuario lo pida.
+
 ## Pendientes / ideas
-- **Producción**: HTTPS y dominio, zona horaria de Ecuador en el servidor, respaldo automático, monitoreo, contenedor de la app.
-- Extraer la fecha de la visita («mañana», «el viernes») para que no se venza antes de llegar.
-- Permisos automáticos para técnicos (el residente los pide; se validan contra el estado de pago; código que el guardia verifica).
-- Accesos excepcionales con motivo y auditoría; botón de emergencia para el guardia.
-- Subir el corte de pagos desde Excel; importar residentes desde Excel.
-- WhatsApp: modo silencioso, pausa si responde un humano, tope de mensajes por hora; pasar a la API oficial de Meta.
-- Varios conjuntos: `conjunto_id` en las tablas, líneas de WhatsApp y parámetros por conjunto, panel de super-admin.
+- **Búsqueda por nombre del residente** en visita sin aviso: pospuesta (la lista sería enorme). Diseño hablado: mínimo 3 letras,
+  máximo 8 resultados, solo nombres, historial de búsquedas, casa visible junto al nombre.
+- Despliegue continuo en 3 etapas (script con reversión, CI en GitHub, CD con aprobación): propuesto, sin elegir.
+- Migrar a PostgreSQL administrado DESPUÉS del piloto (solo cuando se pida; scripts y pruebas ya existen).
+- Permisos automáticos para técnicos, accesos excepcionales con auditoría, botón de emergencia, subir el corte de pagos,
+  modo silencioso y topes de WhatsApp, API oficial de Meta, varios conjuntos, extraer la fecha de la visita («mañana»),
+  compilar Tailwind (hoy CDN), respaldo automático activo.
 - Safari graba audio en MP4 pero el frontend lo envía como `.webm` (usar Chrome en la pantalla de demostración).

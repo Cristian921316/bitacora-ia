@@ -60,17 +60,18 @@ residentes = Table(
     "residentes", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("telefono", String(20), unique=True),
-    Column("cedula", String(20), unique=True),
+    Column("cedula", String(20)),          # puede repetirse: la lista de residentes no siempre es limpia
     Column("nombre", Text),
     Column("casa", Text, nullable=False),
+    Index("ix_residentes_cedula", "cedula"),
     sqlite_autoincrement=True,
 )
 
 # Estado de pago POR CASA (una casa puede tener varios celulares).
 casas = Table(
     "casas", metadata,
-    Column("clave", String(100), primary_key=True),  # casa en minúsculas y sin espacios repetidos
-    Column("casa", String(100), nullable=False),
+    Column("clave", String(200), primary_key=True),  # casa en minúsculas y sin espacios repetidos
+    Column("casa", String(200), nullable=False),
     Column("al_dia", Boolean, nullable=False, server_default=true()),
     Column("actualizado_por", String(50)),
     Column("actualizado_en", String(19)),

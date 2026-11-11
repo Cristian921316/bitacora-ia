@@ -2,7 +2,9 @@
 
 Columnas (en cualquier orden, con estos u otros nombres parecidos):
     Cédula · Nombre · Mz · Villa · Estado de pago · Celular
-Obligatorias: Nombre, Mz, Villa y Celular (el celular es lo que une a la persona con WhatsApp).
+Obligatorias: Nombre, Mz, Villa y Estado de pago (la columna; una fila puede traerlo vacío = "sin cambio").
+La Cédula y el Celular son opcionales y NO se validan: lo que no sirva se carga sin ese dato y queda un AVISO
+(la persona se puede completar después, editándola en la pantalla de Residentes o subiendo el archivo otra vez).
 
 Se trabaja en dos pasos: primero se REVISA el archivo (no guarda nada y muestra qué pasaría) y luego se
 confirma. Solo agrega o actualiza: las casas que no aparecen en el archivo no se tocan.
@@ -28,6 +30,10 @@ router = APIRouter()
 MAX_BYTES = 5 * 1024 * 1024
 MAX_FILAS = 5000
 MAX_MOSTRADOS = 200
+MAX_MZ_VILLA = 50      # caracteres de la manzana y de la villa
+MAX_NOMBRE = 200
+MAX_CEDULA = 20
+MAX_CELULAR = 20
 
 SINONIMOS = {
     "cedula": {"cedula", "cedula de identidad", "ci", "identificacion", "documento", "cedula/ruc", "cedula ruc"},
@@ -37,7 +43,7 @@ SINONIMOS = {
     "pago": {"estado de pago", "status de pago", "status", "estado", "pago", "situacion de pago", "situacion"},
     "celular": {"celular", "telefono", "movil", "whatsapp", "cel", "numero de celular", "celular whatsapp"},
 }
-OBLIGATORIAS = ("nombre", "mz", "villa", "celular")
+OBLIGATORIAS = ("nombre", "mz", "villa", "pago")
 NOMBRES_COLUMNA = {"cedula": "Cédula", "nombre": "Nombre", "mz": "Mz", "villa": "Villa",
                    "pago": "Estado de pago", "celular": "Celular"}
 
@@ -115,8 +121,13 @@ def _extraer(filas: List[List[str]]) -> List[dict]:
             if not datos:
                 raise HTTPException(400, "El archivo no tiene filas de datos debajo de los encabezados.")
             return datos
-    raise HTTPException(400, "No encontré los encabezados. La primera fila debe tener: Cédula, Nombre, Mz, Villa, "
-                             "Estado de pago, Celular. Descarga la plantilla para verlo.")
+    raise HTTPException(400, "No encontré los encabezados. La primera fila debe tener: Nombre, Mz, Villa, "
+                             "Estado de pago (y, si los tienes, Cédula y Celular). Descarga la plantilla para verlo.")
+
+
+def _nom(nombre) -> str:
+    """Nombre comparable: sin tildes, en minúsculas y con los espacios normalizados."""
+    return " ".join(_norm(nombre).split())
 
 
 # ---------- validación de cada fila ----------
@@ -126,7 +137,10 @@ def _quitar_prefijo(valor: str, prefijos: str) -> str:
 
 
 def _validar(d: dict) -> dict:
-    """Devuelve los datos limpios, o {'error': 'motivo'}."""
+    """Devuelve los datos limpios más una lista de avisos, o {'error': 'motivo'}.
+    Solo es error lo que impide registrar a la persona: falta el nombre, la manzana o la villa, o un estado de pago
+    ilegible (leerlo mal podría bloquear a una casa que sí pagó). La cédula y el celular nunca bloquean una fila."""
+    avisos: List[str] = []
     nombre = d.get("nombre", "").strip()
     mz = _quitar_prefijo(d.get("mz", ""), "mz|mza|manzana")
     villa = _quitar_prefijo(d.get("villa", ""), "villa|lote|casa|solar")
@@ -134,19 +148,27 @@ def _validar(d: dict) -> dict:
         return {"error": "Falta el nombre"}
     if not mz or not villa:
         return {"error": "Falta la manzana o la villa"}
-    if len(mz) > 10 or len(villa) > 10 or len(nombre) > 120:
-        return {"error": "Manzana, villa o nombre demasiado largos"}
+    if len(mz) > MAX_MZ_VILLA or len(villa) > MAX_MZ_VILLA or len(nombre) > MAX_NOMBRE:
+        return {"error": f"Manzana o villa de más de {MAX_MZ_VILLA} caracteres, o nombre de más de {MAX_NOMBRE}"}
+
+    # cédula: sin validar. Solo se limpian espacios y guiones y se completa el cero que Excel quita
     cedula = d.get("cedula", "").replace(" ", "").replace("-", "")
-    if cedula:
-        if re.fullmatch(r"\d{9}", cedula):   # Excel quita el cero inicial de las cédulas
-            cedula = "0" + cedula
-        if not re.fullmatch(r"[A-Za-z0-9]{5,20}", cedula):
-            return {"error": f"Cédula no válida ({d.get('cedula')})"}
-    if not d.get("celular", "").strip():
-        return {"error": "Falta el celular"}
-    celular = normalizar_telefono(d["celular"])
-    if not 11 <= len(celular) <= 15:
-        return {"error": f"Celular no válido ({d['celular']}). Use el formato 0988391178"}
+    if re.fullmatch(r"\d{9}", cedula):
+        cedula = "0" + cedula
+    if len(cedula) > MAX_CEDULA:
+        avisos.append(f"La cédula «{cedula[:30]}» es demasiado larga: se cargó sin cédula")
+        cedula = ""
+
+    # celular: opcional. Si no se puede usar, se carga a la persona sin celular y se avisa
+    celular = None
+    crudo = d.get("celular", "").strip()
+    if crudo:
+        normal = normalizar_telefono(crudo)
+        if 11 <= len(normal) <= 15:
+            celular = normal
+        else:
+            avisos.append(f"El celular «{crudo[:30]}» no es utilizable: se cargó sin celular")
+
     pago = None
     p = _norm(d.get("pago", "")).strip()
     if p:
@@ -157,7 +179,7 @@ def _validar(d: dict) -> dict:
         else:
             return {"error": f"Estado de pago no reconocido ({d['pago']}). Use «Al día» o «Impago»"}
     return {"nombre": nombre, "cedula": cedula or None, "celular": celular, "pago": pago,
-            "casa": f"Mz {mz} Villa {villa}"}
+            "casa": f"Mz {mz} Villa {villa}", "avisos": avisos}
 
 
 # ---------- proceso (sirve para revisar y para aplicar) ----------
@@ -171,13 +193,11 @@ def _procesar(datos: List[dict], usuario: str, aplicar: bool) -> dict:
     trans = conn.begin()
     try:
         existentes = [fila(r) for r in conn.execute(select(residentes)).all()]
-        por_ced = {r["cedula"]: r for r in existentes if r["cedula"]}
         por_tel = {r["telefono"]: r for r in existentes if r["telefono"]}
-        por_nombre_casa = {(_norm(r["nombre"]), clave_casa(r["casa"])): r for r in existentes if r["nombre"]}
+        por_nombre_casa = {(_nom(r["nombre"]), clave_casa(r["casa"])): r for r in existentes if r["nombre"]}
         pagos = {c.clave: bool(c.al_dia) for c in conn.execute(select(casas)).all()}
-        ced_vistas: Dict[str, int] = {}
-        tel_vistos: Dict[str, int] = {}
         pago_casa: Dict[str, dict] = {}
+        tocados: Dict[int, dict] = {}     # personas de este archivo (para contar las que quedan sin celular)
         validas = 0
 
         for d in datos:
@@ -186,67 +206,51 @@ def _procesar(datos: List[dict], usuario: str, aplicar: bool) -> dict:
             if "error" in v:
                 errores.append({"fila": n, "motivo": v["error"]})
                 continue
-            if v["cedula"] and v["cedula"] in ced_vistas:
-                errores.append({"fila": n, "motivo": f"La cédula {v['cedula']} está repetida (ya aparece en la fila {ced_vistas[v['cedula']]})"})
-                continue
-            if v["celular"] and v["celular"] in tel_vistos:
-                errores.append({"fila": n, "motivo": f"El celular {v['celular']} está repetido (ya aparece en la fila {tel_vistos[v['celular']]})"})
-                continue
+            for a in v["avisos"]:
+                avisos.append({"fila": n, "motivo": a})
 
-            # ¿ya existe? Por cédula, luego por celular, y si no trae ninguno, por nombre + casa
+            # ¿ya existe? El celular identifica a la persona; si no hay celular se usa nombre + casa.
+            # La cédula NO identifica a nadie (puede repetirse).
+            nombre_n, casa_n = _nom(v["nombre"]), clave_casa(v["casa"])
             actual = None
-            if v["cedula"] and v["cedula"] in por_ced:
-                actual = por_ced[v["cedula"]]
-            elif v["celular"] and v["celular"] in por_tel:
-                actual = por_tel[v["celular"]]
-            elif not v["cedula"] and not v["celular"]:
-                actual = por_nombre_casa.get((_norm(v["nombre"]), clave_casa(v["casa"])))
-
-            # el mismo celular con otra cédula = otra persona, no se puede fusionar
-            if actual is not None and v["cedula"] and actual["cedula"] and actual["cedula"] != v["cedula"]:
-                errores.append({"fila": n, "motivo": f"El celular ya pertenece a otro residente con otra cédula ({actual['nombre'] or 'sin nombre'}, {actual['casa']})"})
-                continue
-
-            # conflictos con OTRA persona ya registrada
-            otro_tel = por_tel.get(v["celular"]) if v["celular"] else None
-            otra_ced = por_ced.get(v["cedula"]) if v["cedula"] else None
-            if (otro_tel is not None and otro_tel is not actual) or (otra_ced is not None and otra_ced is not actual):
-                dueno = (otro_tel or otra_ced)
-                errores.append({"fila": n, "motivo": f"El celular o la cédula ya pertenecen a otro residente ({dueno['nombre'] or 'sin nombre'}, {dueno['casa']})"})
-                continue
+            if v["celular"] and v["celular"] in por_tel:
+                dueno = por_tel[v["celular"]]
+                if _nom(dueno["nombre"]) == nombre_n:
+                    actual = dueno            # misma persona (aunque haya cambiado de casa)
+                else:                          # otro nombre: puede ser alguien que comparte el celular. Nunca se pisa a la anterior
+                    avisos.append({"fila": n, "motivo": f"El celular +{v['celular']} ya lo tiene {dueno['nombre'] or 'otra persona'} "
+                                                       f"({dueno['casa']}): {v['nombre']} se cargó sin celular"})
+                    v["celular"] = None
+            if actual is None:
+                candidato = por_nombre_casa.get((nombre_n, casa_n))
+                if candidato is not None:
+                    if not v["celular"] or not candidato["telefono"] or candidato["telefono"] == v["celular"]:
+                        actual = candidato     # misma persona: se le completa o confirma el celular
+                    else:
+                        avisos.append({"fila": n, "motivo": f"{v['nombre']} ya existe en {v['casa']} con otro celular "
+                                                           f"(+{candidato['telefono']}): se agregó como persona aparte"})
 
             validas += 1
-            if v["cedula"]:
-                ced_vistas[v["cedula"]] = n
-            if v["celular"]:
-                tel_vistos[v["celular"]] = n
-
             if actual is None:
                 nuevo_id = conn.execute(insert(residentes).values(
                     telefono=v["celular"], cedula=v["cedula"], nombre=v["nombre"], casa=v["casa"])).inserted_primary_key[0]
                 actual = {"id": nuevo_id, "telefono": v["celular"], "cedula": v["cedula"], "nombre": v["nombre"], "casa": v["casa"]}
                 nuevos += 1
             else:
-                if clave_casa(actual["casa"]) != clave_casa(v["casa"]):
+                if clave_casa(actual["casa"]) != casa_n:
                     avisos.append({"fila": n, "motivo": f"{v['nombre']} cambia de casa: {actual['casa']} → {v['casa']}"})
-                if v["celular"] and actual["telefono"] and actual["telefono"] != v["celular"]:
-                    avisos.append({"fila": n, "motivo": f"{v['nombre']} cambia de celular: +{actual['telefono']} → +{v['celular']}"})
                 cambios = {"nombre": v["nombre"], "casa": v["casa"]}
                 if v["cedula"]:
                     cambios["cedula"] = v["cedula"]
-                if v["celular"]:
+                if v["celular"] and not actual["telefono"]:
                     cambios["telefono"] = v["celular"]
                 conn.execute(update(residentes).where(residentes.c.id == actual["id"]).values(**cambios))
-                for k in ("cedula", "telefono"):   # mantiene los índices al día
-                    if actual.get(k) and actual[k] != cambios.get(k, actual[k]):
-                        (por_ced if k == "cedula" else por_tel).pop(actual[k], None)
                 actual.update(cambios)
                 actualizados += 1
-            if actual["cedula"]:
-                por_ced[actual["cedula"]] = actual
             if actual["telefono"]:
                 por_tel[actual["telefono"]] = actual
-            por_nombre_casa[(_norm(actual["nombre"]), clave_casa(actual["casa"]))] = actual
+            por_nombre_casa[(_nom(actual["nombre"]), clave_casa(actual["casa"]))] = actual
+            tocados[actual["id"]] = actual
 
             # estado de pago: se junta por casa
             clave = clave_casa(v["casa"])
@@ -278,6 +282,7 @@ def _procesar(datos: List[dict], usuario: str, aplicar: bool) -> dict:
             else:
                 impago_final += 1
 
+        sin_celular = sum(1 for r in tocados.values() if not r["telefono"])
         if aplicar:
             trans.commit()
         else:
@@ -292,7 +297,7 @@ def _procesar(datos: List[dict], usuario: str, aplicar: bool) -> dict:
         "aplicado": aplicar,
         "resumen": {
             "filas_leidas": len(datos), "filas_validas": validas, "filas_con_error": len(errores),
-            "residentes_nuevos": nuevos, "residentes_actualizados": actualizados,
+            "residentes_nuevos": nuevos, "residentes_actualizados": actualizados, "sin_celular": sin_celular,
             "casas_en_archivo": len(pago_casa), "casas_nuevas": casas_nuevas,
             "casas_al_dia": al_dia_final, "casas_impagas": impago_final, "cambios_de_pago": len(cambios_pago),
         },
@@ -324,7 +329,7 @@ def plantilla(_: dict = Depends(solo_admin)):
     ws.title = "Residentes"
     ws.append(["Cédula", "Nombre", "Mz", "Villa", "Estado de pago", "Celular"])
     ws.append(["0912345678", "Juan Pérez (ejemplo)", "6", "23", "Al día", "0988391178"])
-    ws.append(["0923456789", "María Gómez (ejemplo)", "6", "24", "Impago", "0977777777"])
+    ws.append(["", "María Gómez (ejemplo)", "6", "24", "Impago", ""])
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="1E293B")
@@ -337,15 +342,18 @@ def plantilla(_: dict = Depends(solo_admin)):
     ayuda = wb.create_sheet("Instrucciones")
     for linea in (
         "Una fila por persona. Borra las filas de ejemplo antes de subir el archivo.",
-        "Columnas obligatorias: Nombre, Mz, Villa y Celular. Recomendadas: Cédula y Estado de pago.",
-        "Estado de pago: «Al día» o «Impago» (también se entiende Sí/No, Pagado, Pendiente, Moroso).",
+        "Obligatorias: las columnas Nombre, Mz, Villa y Estado de pago. Mz y Villa admiten hasta 50 caracteres.",
+        "Estado de pago: «Al día» o «Impago» (también se entiende Sí/No, Pagado, Pendiente, Moroso). Vacío = sin cambio.",
+        "Cédula y Celular son opcionales y no se validan. Si un celular no sirve, la persona se carga sin celular y se te avisa.",
         "Celular: el WhatsApp con el que la persona escribirá al sistema. Formato 0988391178 (también sirve 593988391178).",
+        "Sin celular la persona queda registrada, pero no podrá usar WhatsApp hasta que se lo agregues (se edita en la pantalla Residentes).",
         "Si una casa tiene varias personas con estados distintos, la casa queda como IMPAGA.",
-        "Volver a subir el archivo ACTUALIZA a las personas (se reconocen por cédula o celular); no las duplica.",
+        "Volver a subir el archivo no duplica: se reconoce a la persona por celular (con el mismo nombre) o por nombre + casa, y se le completan los datos.",
+        "Si dos personas distintas traen el mismo celular, el celular se queda con la primera y la otra se carga sin celular (se te avisa).",
         "Las casas que no aparecen en el archivo no se modifican.",
     ):
         ayuda.append([linea])
-    ayuda.column_dimensions["A"].width = 110
+    ayuda.column_dimensions["A"].width = 120
     buf = io.BytesIO()
     wb.save(buf)
     return Response(content=buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

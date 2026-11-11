@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from openai import OpenAI
 from pydantic import BaseModel
 from sqlalchemy import and_, delete, func, insert, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 
 import auth
 import config
@@ -28,6 +29,7 @@ from db import (accesos, ahora_iso, asegurar_casa, casa_al_dia, casas, clave_cas
 from importar import router as importar_router
 from realtime import manager, vista_para
 from reportes import _norm
+from resumen import AYUDA_ADMIN, armar_resumen, detectar_periodo
 from reportes import router as reportes_router
 from util import normalizar_telefono, solo_digitos
 
@@ -69,9 +71,18 @@ class TextoIn(BaseModel):
 
 
 class ResidenteIn(BaseModel):
-    telefono: str  # celular local (0988391178) o con código de país (593988391178)
+    telefono: Optional[str] = None  # celular local (0988391178) o con código de país (593988391178); opcional
     casa: str
     nombre: Optional[str] = None
+    cedula: Optional[str] = None
+
+
+class ResidentePatch(BaseModel):
+    """Edición parcial: solo se cambian los campos que vienen en la petición."""
+    nombre: Optional[str] = None
+    cedula: Optional[str] = None
+    telefono: Optional[str] = None
+    casa: Optional[str] = None
 
 
 class CasaPagoIn(BaseModel):
@@ -86,9 +97,19 @@ class SinAviso(BaseModel):
     tipo: TipoVisita = TipoVisita.VISITA
     placa: Optional[str] = None
     observaciones: Optional[str] = None
+    # A quién de la casa se le pregunta. Sin este campo se pregunta a todos; lista vacía = a nadie (se registra igual)
+    residente_ids: Optional[List[int]] = None
 
+
+MAX_MZ_VILLA = 50                       # caracteres de la manzana y de la villa
+MAX_CASA = 3 + MAX_MZ_VILLA + 7 + MAX_MZ_VILLA   # "Mz " + mz + " Villa " + villa
 
 # Mensajes neutros: no revelan el motivo (el guardia puede ver el chat del número de garita)
+def msg_mora_sin_aviso(casa: str) -> str:
+    return (f"El residente de {casa} no está al día en sus pagos. Debe comunicarse con administración. "
+            "No se puede avisar de esta visita.")
+
+
 MSG_BLOQUEO_GARITA = "Esta casa no puede recibir visitas por ahora. Comuníquese con administración."
 MSG_BLOQUEO_WSP = "Por ahora no es posible registrar visitas desde tu casa. Por favor comunícate con la administración."
 
@@ -201,22 +222,21 @@ async def procesar_audio(
 ) -> dict:
     """Transcribe, extrae visitas, guarda y notifica. Si casa_forzada viene
     (p. ej. por el número de WhatsApp), reemplaza la casa que dedujo la IA."""
+    return await extraer_y_guardar(transcribir(data, filename, content_type), casa_forzada, origen, telefono)
+
+
+def transcribir(data: bytes, filename: str, content_type: str) -> str:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(500, "OPENAI_API_KEY no está configurada en el archivo .env")
     if not data:
         raise HTTPException(400, "Audio vacío")
-
     client = OpenAI(api_key=api_key)
     try:
-        transcripcion = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=(filename, data, content_type),
-            language="es",
-        )
+        return client.audio.transcriptions.create(
+            model="whisper-1", file=(filename, data, content_type), language="es").text
     except Exception as exc:
         raise HTTPException(502, f"Error transcribiendo el audio con OpenAI: {exc}")
-    return await extraer_y_guardar(transcripcion.text, casa_forzada, origen, telefono)
 
 
 MAX_TEXTO = 1000
@@ -334,21 +354,40 @@ async def cambiar_estado(acceso_id: int, cambio: CambioEstado, background: Backg
 # ---------- Residentes y estado de pago ----------
 @app.post("/api/residentes")
 def registrar_residente(r: ResidenteIn, _: dict = Depends(solo_admin)):
-    """Asocia un teléfono de WhatsApp con una casa. Si la casa es nueva, nace 'al día'."""
-    tel = normalizar_telefono(r.telefono)
-    if not 11 <= len(tel) <= 15:
-        raise HTTPException(400, "Teléfono inválido: use el formato 0988391178 o 593988391178")
+    """Registra a una persona en una casa. El celular (WhatsApp) es opcional y se puede completar después.
+    Si la casa es nueva, nace 'al día'."""
     casa = " ".join(r.casa.split())
     if not casa:
         raise HTTPException(400, "La casa es obligatoria")
+    if len(casa) > MAX_CASA:
+        raise HTTPException(400, f"La casa es demasiado larga (máximo {MAX_CASA} caracteres)")
     nombre = (r.nombre or "").strip() or None
+    cedula = (r.cedula or "").replace(" ", "").strip() or None
+    if cedula and len(cedula) > 20:
+        raise HTTPException(400, "La cédula admite hasta 20 caracteres")
+    tel = None
+    if (r.telefono or "").strip():
+        tel = normalizar_telefono(r.telefono)
+        if not 11 <= len(tel) <= 15:
+            raise HTTPException(400, "Celular inválido: use el formato 0988391178 o 593988391178")
     with engine.begin() as conn:
-        if conn.execute(select(residentes.c.id).where(residentes.c.telefono == tel)).first():
+        if tel and conn.execute(select(residentes.c.id).where(residentes.c.telefono == tel)).first():
             conn.execute(update(residentes).where(residentes.c.telefono == tel).values(casa=casa, nombre=nombre))
+        elif not tel and nombre and conn.execute(select(residentes.c.id).where(
+                func.lower(residentes.c.nombre) == nombre.lower(), residentes.c.casa == casa)).first():
+            raise HTTPException(409, "Esa persona ya está registrada en esa casa")
         else:
-            conn.execute(insert(residentes).values(telefono=tel, casa=casa, nombre=nombre))
+            conn.execute(insert(residentes).values(telefono=tel, cedula=cedula, nombre=nombre, casa=casa))
         asegurar_casa(conn, casa)
-    return {"telefono": tel, "casa": casa, "nombre": nombre}
+    return {"telefono": tel, "casa": casa, "nombre": nombre, "cedula": cedula}
+
+
+def _con_pago(r: dict, pagos: dict) -> dict:
+    c = pagos.get(clave_casa(r["casa"]))
+    r["al_dia"] = True if c is None else bool(c.al_dia)
+    r["pago_actualizado"] = c.actualizado_en if c is not None else None
+    r["pago_actualizado_por"] = c.actualizado_por if c is not None else None
+    return r
 
 
 @app.get("/api/residentes")
@@ -356,12 +395,61 @@ def listar_residentes(_: dict = Depends(solo_admin)):
     with engine.connect() as conn:
         rs = [fila(x) for x in conn.execute(select(residentes)).all()]
         pagos = {c.clave: c for c in conn.execute(select(casas)).all()}
-    for r in rs:
-        c = pagos.get(clave_casa(r["casa"]))
-        r["al_dia"] = True if c is None else bool(c.al_dia)
-        r["pago_actualizado"] = c.actualizado_en if c is not None else None
-        r["pago_actualizado_por"] = c.actualizado_por if c is not None else None
-    return rs
+    return [_con_pago(r, pagos) for r in rs]
+
+
+@app.patch("/api/residentes/{rid}")
+def editar_residente(rid: int, datos: ResidentePatch, _: dict = Depends(solo_admin)):
+    """Edita nombre, cédula, celular o casa de una persona (la pantalla lo usa en línea, un campo a la vez)."""
+    campos = datos.model_dump(exclude_unset=True)
+    cambios: dict = {}
+    if "nombre" in campos:
+        nombre = (campos["nombre"] or "").strip()
+        if len(nombre) > 200:
+            raise HTTPException(400, "El nombre admite hasta 200 caracteres")
+        cambios["nombre"] = nombre or None
+    if "cedula" in campos:
+        cedula = (campos["cedula"] or "").replace(" ", "").strip()
+        if len(cedula) > 20:
+            raise HTTPException(400, "La cédula admite hasta 20 caracteres")
+        cambios["cedula"] = cedula or None
+    if "telefono" in campos:
+        crudo = (campos["telefono"] or "").strip()
+        if not crudo:
+            cambios["telefono"] = None          # vaciar el campo quita el celular
+        else:
+            tel = normalizar_telefono(crudo)
+            if not 11 <= len(tel) <= 15:
+                raise HTTPException(400, "Celular inválido: use el formato 0988391178 o 593988391178")
+            cambios["telefono"] = tel
+    if "casa" in campos:
+        casa = " ".join((campos["casa"] or "").split())
+        if not casa:
+            raise HTTPException(400, "La casa es obligatoria")
+        if len(casa) > MAX_CASA:
+            raise HTTPException(400, f"La casa es demasiado larga (máximo {MAX_CASA} caracteres)")
+        cambios["casa"] = casa
+    if not cambios:
+        raise HTTPException(400, "No hay nada que cambiar")
+
+    try:
+        with engine.begin() as conn:
+            actual = fila(conn.execute(select(residentes).where(residentes.c.id == rid)).first())
+            if not actual:
+                raise HTTPException(404, "Residente no encontrado")
+            if cambios.get("telefono"):
+                otro = fila(conn.execute(select(residentes).where(
+                    residentes.c.telefono == cambios["telefono"], residentes.c.id != rid)).first())
+                if otro:
+                    raise HTTPException(409, f"Ese celular ya lo tiene {otro['nombre'] or 'otra persona'} ({otro['casa']})")
+            conn.execute(update(residentes).where(residentes.c.id == rid).values(**cambios))
+            if "casa" in cambios:
+                asegurar_casa(conn, cambios["casa"])
+            nuevo = fila(conn.execute(select(residentes).where(residentes.c.id == rid)).first())
+            pagos = {c.clave: c for c in conn.execute(select(casas)).all()}
+    except IntegrityError:
+        raise HTTPException(409, "Ese celular ya está registrado en otra persona")
+    return _con_pago(nuevo, pagos)
 
 
 @app.delete("/api/residentes/{rid}")
@@ -411,6 +499,11 @@ async def responder_wsp(numero: str, texto: str) -> None:
         print(f"[wsp] no se pudo responder a {numero}: {exc}")
 
 
+def telefonos_admin() -> set:
+    """Celulares de administradores (ADMIN_TELEFONOS del .env) en formato internacional."""
+    return {normalizar_telefono(t) for t in config.ADMIN_TELEFONOS.split(",") if t.strip()}
+
+
 AYUDA_WSP = ("Escríbeme o mándame una *nota de voz* con las visitas que esperas. "
              "Ejemplo: \"Hoy viene Juan Pérez en taxi, placa ABC123\".")
 
@@ -437,6 +530,57 @@ async def notificar_ingreso(reg: dict, sin_respuesta: bool = False) -> None:
 
 
 # ---------- Visitas sin aviso: el guardia las registra y el residente autoriza o no por WhatsApp ----------
+def _suelto(x: str) -> str:
+    """Forma comparable de una manzana o villa: sin separadores, en minúsculas y sin ceros a la izquierda
+    (así 06 = 6 y 12A = 12-A = 12 A)."""
+    t = re.sub(r"[\s\-_./]+", "", (x or "").lower())
+    return t.lstrip("0") or ("0" if t else "")
+
+
+def _casas_que_coinciden(conn, mz: str, villa: str) -> list:
+    """Casas guardadas cuya manzana y villa, en forma suelta, equivalen a lo escrito (1 = 01, 12A = 12-A)."""
+    buscado = (_suelto(mz), _suelto(villa))
+    casas: dict = {}
+    for r in conn.execute(select(residentes.c.id, residentes.c.nombre, residentes.c.telefono, residentes.c.casa)
+                          .order_by(residentes.c.nombre, residentes.c.id)).all():
+        m = re.match(r"^Mz\s+(.+?)\s+Villa\s+(.+)$", r.casa or "", re.I)
+        if m and (_suelto(m.group(1)), _suelto(m.group(2))) == buscado:
+            g = casas.setdefault(r.casa, {"casa": r.casa, "mz": m.group(1), "villa": m.group(2), "residentes": []})
+            g["residentes"].append({"id": r.id, "nombre": r.nombre or "Sin nombre", "avisable": bool(r.telefono)})
+    return sorted(casas.values(), key=lambda g: (g["mz"], g["villa"]))
+
+
+@app.get("/api/casa/residentes")
+def residentes_de_casa(mz: str, villa: str, exacta: bool = False, u: dict = Depends(usuario_actual)):
+    """Para la visita sin aviso: quién vive en esa casa, para que el guardia confirme con el visitante a quién va a ver.
+    Devuelve SOLO nombres (y si se les puede avisar): nunca celulares, cédulas ni el estado de pago.
+    La búsqueda ignora ceros a la izquierda, mayúsculas y separadores (1 encuentra 01, 12A encuentra 12-A).
+    Si coincide una sola casa se devuelve directa; si coinciden varias, se listan en `sugerencias` para elegir
+    (con exacta=1 solo se busca la casa tal cual está guardada)."""
+    mz, villa = mz.strip(), villa.strip()
+    if not mz or not villa:
+        raise HTTPException(400, "Escribe la manzana y la villa")
+    if max(len(mz), len(villa)) > MAX_MZ_VILLA:
+        raise HTTPException(400, f"La manzana y la villa admiten hasta {MAX_MZ_VILLA} caracteres")
+    casa = f"Mz {mz} Villa {villa}"
+    with engine.connect() as conn:
+        coinciden = _casas_que_coinciden(conn, mz, villa)
+    if exacta:
+        coinciden = [g for g in coinciden if g["casa"].lower() == clave_casa(casa)] or coinciden[:0]
+    with engine.connect() as conn:
+        for g in coinciden:
+            g["bloqueada"] = bool(config.BLOQUEO_POR_MORA and not casa_al_dia(conn, g["casa"]))
+    if len(coinciden) == 1:
+        g = coinciden[0]
+        if g["bloqueada"]:      # no se muestran ni los nombres: el guardia solo debe saber que no se puede avisar
+            return {"casa": g["casa"], "existe": True, "bloqueada": True, "mensaje": msg_mora_sin_aviso(g["casa"]),
+                    "residentes": [], "sugerencias": []}
+        return {"casa": g["casa"], "existe": True, "bloqueada": False, "residentes": g["residentes"], "sugerencias": []}
+    return {"casa": casa, "existe": bool(coinciden), "bloqueada": False, "residentes": [], "sugerencias": [
+        {"casa": g["casa"], "mz": g["mz"], "villa": g["villa"], "bloqueada": g["bloqueada"],
+         "residentes": [] if g["bloqueada"] else [x["nombre"] for x in g["residentes"]]} for g in coinciden[:6]]}
+
+
 async def notificar_solicitud(reg: dict, telefonos: List[str]) -> None:
     placa = f" · placa {reg['placa']}" if reg.get("placa") else ""
     obs = f"\n📝 {reg['observaciones']}" if reg.get("observaciones") else ""
@@ -452,31 +596,59 @@ async def visita_sin_aviso(v: SinAviso, background: BackgroundTasks, u: dict = D
     mz, villa, nombre = v.mz.strip(), v.villa.strip(), v.nombre_visitante.strip()
     if not (mz and villa and nombre):
         raise HTTPException(400, "Manzana, villa y nombre del visitante son obligatorios")
-    if max(len(mz), len(villa)) > 10 or len(nombre) > 80:
+    if max(len(mz), len(villa)) > MAX_MZ_VILLA or len(nombre) > 80:
         raise HTTPException(400, "Datos demasiado largos")
     casa = f"Mz {mz} Villa {villa}"
+    with engine.connect() as conn:
+        coinciden = _casas_que_coinciden(conn, mz, villa)
+        if v.residente_ids:   # la casa es la del residente elegido, tal como está guardada (no como la escribió el guardia)
+            casas_el = {c for (c,) in conn.execute(select(residentes.c.casa).where(residentes.c.id.in_(v.residente_ids))).all()}
+            if not casas_el <= {g["casa"] for g in coinciden}:
+                raise HTTPException(400, "Las personas elegidas no pertenecen a esa casa")
+            if len(casas_el) == 1:
+                casa = next(iter(casas_el))
+        elif len(coinciden) == 1:
+            casa = coinciden[0]["casa"]
+        elif not coinciden:
+            raise HTTPException(400, f"No existe la casa Mz {mz} Villa {villa}. Confirma con el visitante la manzana y la villa.")
+        else:
+            raise HTTPException(400, "Hay varias casas que coinciden; elige la correcta en la pantalla.")
     with engine.connect() as conn:
         en_mora = config.BLOQUEO_POR_MORA and not casa_al_dia(conn, casa)
     if en_mora:
         with engine.begin() as conn:
             registrar_bloqueo(conn, casa, "garita", f"Visita sin aviso: {nombre}", usuario=u["usuario"])
-        raise HTTPException(409, MSG_BLOQUEO_GARITA)
+        raise HTTPException(409, msg_mora_sin_aviso(casa))
+
+    # ¿a quién se le pregunta? A los elegidos por el guardia; si no eligió, a todos los de la casa
+    with engine.connect() as conn:
+        de_casa = conn.execute(select(residentes.c.id, residentes.c.nombre, residentes.c.telefono)
+                               .where(func.lower(residentes.c.casa) == clave_casa(casa))).all()
+    if v.residente_ids is None:
+        elegidos = de_casa
+    else:
+        elegidos = [r for r in de_casa if r.id in set(v.residente_ids)]
+        if v.residente_ids and not elegidos:
+            raise HTTPException(400, "Las personas elegidas no pertenecen a esa casa")
+    avisables = [r for r in elegidos if r.telefono]
+    telefonos = [r.telefono for r in avisables]
+    preguntado_a = [r.nombre or "Residente" for r in avisables]
+    quien = f"Sin aviso (se preguntó a {', '.join(preguntado_a)[:150]})" if preguntado_a else "Sin aviso (registrado en garita)"
 
     ahora = ahora_iso()
     with engine.begin() as conn:
         nuevo_id = conn.execute(insert(accesos).values(
             casa=casa, nombre_visitante=nombre, tipo=v.tipo.value, placa=(v.placa or "").strip() or None,
             observaciones=(v.observaciones or "").strip() or None, estado="PENDIENTE",
-            autorizado_por="Sin aviso (registrado en garita)", fecha_hora=ahora, origen="garita",
+            autorizado_por=quien, fecha_hora=ahora, origen="garita",
         )).inserted_primary_key[0]
         conn.execute(insert(movimientos).values(acceso_id=nuevo_id, evento="SOLICITUD", fecha_hora=ahora,
                                                 origen="garita", usuario=u["usuario"]))
         reg = fila(conn.execute(select(accesos).where(accesos.c.id == nuevo_id)).first())
-    telefonos = telefonos_de_casa(casa)
     await manager.broadcast({"evento": "nuevo", "registro": reg})
     if telefonos:
         background.add_task(notificar_solicitud, reg, telefonos)
-    return {"registro": vista_para(u["rol"], reg), "residentes_avisados": len(telefonos)}
+    return {"registro": vista_para(u["rol"], reg), "residentes_avisados": len(telefonos), "preguntado_a": preguntado_a}
 
 
 RESP_SI = {"1", "si", "ok", "dale", "autorizo", "autorizar", "acepto", "adelante"}
@@ -496,10 +668,10 @@ async def resolver_solicitud(telefono: str, texto: str) -> Optional[str]:
         return None
     aprobar = m.group(1) in RESP_SI
     ref = int(m.group(2)) if m.group(2) else None
-    mis_casas = select(residentes.c.casa).where(residentes.c.telefono == telefono)
+    mis_casas = select(func.lower(residentes.c.casa)).where(residentes.c.telefono == telefono)
     with engine.connect() as conn:
         pendientes = [fila(r) for r in conn.execute(
-            select(accesos).where(accesos.c.estado == "PENDIENTE", accesos.c.casa.in_(mis_casas),
+            select(accesos).where(accesos.c.estado == "PENDIENTE", func.lower(accesos.c.casa).in_(mis_casas),
                                   accesos.c.fecha_hora >= parametros.limite_vigencia())
             .order_by(accesos.c.id.desc())).all()]
     if not pendientes:
@@ -507,7 +679,7 @@ async def resolver_solicitud(telefono: str, texto: str) -> Optional[str]:
         hace = (datetime.now() - timedelta(minutes=10)).isoformat(timespec="seconds")
         with engine.connect() as conn:
             tarde = conn.execute(
-                select(accesos.c.id).where(accesos.c.casa.in_(mis_casas), accesos.c.hora_respuesta >= hace,
+                select(accesos.c.id).where(func.lower(accesos.c.casa).in_(mis_casas), accesos.c.hora_respuesta >= hace,
                                            accesos.c.respondido_por != telefono)).first()
         return "Esa solicitud ya fue respondida por otra persona de tu casa." if tarde else None
     if ref is not None:
@@ -568,8 +740,30 @@ async def whatsapp_webhook(request: Request):
         await responder_wsp(telefono, AYUDA_WSP)
         return {"ok": True, "ignorado": "tipo de mensaje no soportado"}
 
+    if telefono in telefonos_admin():       # ¿un administrador pide el resumen? (texto o nota de voz)
+        try:
+            if es_audio:
+                b64 = message.get("base64") or data.get("base64")
+                if not b64:
+                    media = await evolution_post(f"/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}", {"message": {"key": key}})
+                    b64 = media.get("base64")
+                texto_msg = transcribir(base64.b64decode(b64), "nota.ogg", "audio/ogg")
+                es_audio = False            # ya está transcrito: si no era un pedido de resumen, sigue como texto normal
+            periodo = detectar_periodo(texto_msg or "")
+        except Exception as exc:
+            print(f"[wsp] error con el audio del administrador {telefono}: {exc}")
+            await responder_wsp(telefono, "No pude escuchar el audio. Intenta de nuevo o escribe: reporte de hoy.")
+            return {"ok": False, "error": str(exc)}
+        if periodo:
+            with engine.connect() as conn:
+                await responder_wsp(telefono, armar_resumen(conn, periodo))
+            return {"ok": True, "resumen": periodo}
+
     with engine.connect() as conn:
         res = fila(conn.execute(select(residentes.c.casa).where(residentes.c.telefono == telefono)).first())
+    if not res and telefono in telefonos_admin():
+        await responder_wsp(telefono, AYUDA_ADMIN)
+        return {"ok": True, "ignorado": "administrador sin pedido de resumen"}
     if not res:
         await responder_wsp(telefono, "Tu número no está registrado en la bitácora. Pide a la administración que te registre.")
         return {"ok": True, "ignorado": "residente no registrado"}
