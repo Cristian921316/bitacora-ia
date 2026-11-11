@@ -5,31 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Residentes · Bitácora</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .celda { cursor: text; }
+    .celda:hover { background: rgba(71, 85, 105, .45); }
+    @keyframes parpadeo-ok { from { background: rgba(34, 197, 94, .55); } to { background: transparent; } }
+    @keyframes parpadeo-error { from { background: rgba(239, 68, 68, .6); } to { background: transparent; } }
+    .flash-ok { animation: parpadeo-ok 1.2s ease-out; }
+    .flash-error { animation: parpadeo-error 1.6s ease-out; }
+  </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen">
   <script src="/assets/nav.js"></script>
 
-  <main class="max-w-4xl mx-auto p-4 space-y-6">
+  <main class="max-w-5xl mx-auto p-4 space-y-6">
     <div class="flex flex-wrap items-center gap-3">
       <h1 class="text-xl font-bold">👥 Residentes</h1>
       <button id="btnImportar" class="ml-auto px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm">📥 Importar residentes (Excel)</button>
     </div>
 
-    <form id="form" class="bg-slate-800 border border-slate-700 rounded-xl p-4 grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
+    <form id="form" class="bg-slate-800 border border-slate-700 rounded-xl p-4 grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
       <label class="text-xs text-slate-400">Manzana
-        <input id="mz" required placeholder="6" maxlength="6" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+        <input id="mz" required placeholder="6" maxlength="50" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
       </label>
       <label class="text-xs text-slate-400">Villa
-        <input id="villa" required placeholder="23" maxlength="6" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+        <input id="villa" required placeholder="23" maxlength="50" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
       </label>
       <label class="text-xs text-slate-400 col-span-2 md:col-span-1">Nombre
-        <input id="nombre" placeholder="Opcional" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+        <input id="nombre" placeholder="Nombre" maxlength="200" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
       </label>
-      <label class="text-xs text-slate-400 col-span-2 md:col-span-1">Celular (WhatsApp)
-        <input id="telefono" required inputmode="tel" placeholder="0988391178" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      <label class="text-xs text-slate-400">Cédula <span class="text-slate-500">(opcional)</span>
+        <input id="cedula" maxlength="20" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      </label>
+      <label class="text-xs text-slate-400">Celular <span class="text-slate-500">(opcional)</span>
+        <input id="telefono" inputmode="tel" placeholder="0988391178" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
       </label>
       <button class="col-span-2 md:col-span-1 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 font-semibold text-sm">+ Agregar</button>
-      <p id="msg" class="col-span-2 md:col-span-5 text-sm hidden"></p>
+      <p id="msg" class="col-span-2 md:col-span-6 text-sm hidden"></p>
     </form>
 
     <section>
@@ -38,11 +49,13 @@
         <span id="chips" class="text-xs flex gap-2"></span>
         <select id="filtro" class="rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-sm text-slate-100">
           <option value="">Todos</option><option value="impago">Solo impagos</option><option value="aldia">Solo al día</option>
+          <option value="sincel">Sin celular</option>
         </select>
-        <input id="buscar" type="search" autocomplete="off" placeholder="Buscar por casa, nombre o celular…"
+        <input id="buscar" type="search" autocomplete="off" placeholder="Buscar por casa, nombre, cédula o celular…"
           class="flex-1 min-w-[180px] max-w-sm rounded bg-slate-900 border border-slate-600 focus:border-indigo-400 focus:outline-none px-3 py-1.5 text-sm placeholder-slate-500" />
       </div>
-      <p class="text-xs text-slate-500 mb-2">El estado de pago es <b>por casa</b>: al cambiarlo se aplica a todos los celulares de esa casa.
+      <p class="text-xs text-slate-500 mb-1">✏️ <b>Haz clic en un dato para editarlo</b>: <b>Enter</b> guarda, <b>Esc</b> cancela y <b>Tab</b> pasa al siguiente dato de la fila.</p>
+      <p class="text-xs text-slate-500 mb-2">El estado de pago es <b>por casa</b>: al cambiarlo se aplica a todas las personas de esa casa.
         Una casa <b>impaga</b> no puede recibir visitas (solo un administrador puede hacer una excepción).</p>
       <div class="overflow-x-auto rounded-xl border border-slate-700">
         <table class="w-full text-sm">
@@ -56,6 +69,8 @@
     </section>
   </main>
 
+  <div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm shadow-lg z-50"></div>
+
   <!-- Ventana: importar residentes desde Excel/CSV -->
   <div id="modalImp" class="hidden fixed inset-0 bg-black/60 flex items-start justify-center p-4 z-50 overflow-y-auto">
     <div class="bg-slate-800 border border-slate-600 rounded-xl p-5 w-full max-w-3xl mt-6 space-y-4">
@@ -64,11 +79,12 @@
         <button id="impCerrar" class="ml-auto text-slate-400 hover:text-slate-100 text-xl leading-none">✕</button>
       </div>
       <div class="text-sm text-slate-300 space-y-1">
-        <p>Sube un Excel (<b>.xlsx</b>) o <b>.csv</b> con las columnas <b>Cédula, Nombre, Mz, Villa, Estado de pago y Celular</b>
-          (obligatorios: Nombre, Mz, Villa y Celular).
+        <p>Sube un Excel (<b>.xlsx</b>) o <b>.csv</b> con las columnas <b>Cédula, Nombre, Mz, Villa, Estado de pago y Celular</b>.
+          Obligatorias: <b>Nombre, Mz, Villa y Estado de pago</b>. La cédula y el celular son opcionales y no se validan:
+          lo que no sirva se carga sin ese dato y te aviso, para completarlo después.
           <a href="/api/residentes/plantilla.xlsx" class="text-indigo-300 underline">Descargar plantilla</a></p>
         <p class="text-slate-400">Primero se <b>revisa</b> el archivo y te muestro qué pasaría; no se guarda nada hasta que confirmes.
-          Volver a subirlo actualiza a las personas (no las duplica). Las casas que no están en el archivo no se tocan.</p>
+          Volver a subirlo no duplica a las personas. Las casas que no están en el archivo no se tocan.</p>
       </div>
       <div class="flex flex-wrap items-center gap-3">
         <input id="impArchivo" type="file" accept=".xlsx,.xlsm,.csv" class="text-sm text-slate-300" />
@@ -89,29 +105,39 @@ function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&a
 function norm(s) { return (s ?? '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
 function claveCasa(c) { return (c || '').toLowerCase().split(/\s+/).filter(Boolean).join(' '); }
 function aviso(texto, ok) {
-  const m = $('msg'); m.textContent = texto; m.className = 'col-span-2 md:col-span-5 text-sm ' + (ok ? 'text-green-300' : 'text-red-300');
+  const m = $('msg'); m.textContent = texto; m.className = 'col-span-2 md:col-span-6 text-sm ' + (ok ? 'text-green-300' : 'text-red-300');
+}
+let toastTimer = null;
+function toast(texto, ok = true) {
+  const t = $('toast');
+  t.textContent = texto;
+  t.className = 'fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm shadow-lg z-50 ' + (ok ? 'bg-green-700' : 'bg-red-700');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ok ? 1800 : 5000);
 }
 
+const VACIO = '<span class="text-slate-500">— agregar —</span>';
 function render() {
   const q = norm($('buscar').value).trim(), f = $('filtro').value;
   const lista = residentes
     .filter(r => !q || q.split(/\s+/).every(t => norm(`${r.casa} ${r.nombre} ${r.cedula} ${r.telefono}`).includes(t)))
-    .filter(r => !f || (f === 'impago' ? !r.al_dia : r.al_dia))
+    .filter(r => !f || (f === 'impago' ? !r.al_dia : f === 'aldia' ? r.al_dia : !r.telefono))
     .sort((a, b) => a.casa.localeCompare(b.casa, 'es', { numeric: true }));
   $('cnt').textContent = residentes.length;
   const casasImpagas = new Set(residentes.filter(r => !r.al_dia).map(r => claveCasa(r.casa))).size;
   const casasTotal = new Set(residentes.map(r => claveCasa(r.casa))).size;
+  const sinCel = residentes.filter(r => !r.telefono).length;
   $('chips').innerHTML =
     `<span class="px-2 py-0.5 rounded bg-slate-700">${casasTotal} casas</span>` +
     `<span class="px-2 py-0.5 rounded bg-green-900 text-green-300">${casasTotal - casasImpagas} al día</span>` +
-    `<span class="px-2 py-0.5 rounded ${casasImpagas ? 'bg-red-900 text-red-300' : 'bg-slate-700 text-slate-400'}">${casasImpagas} impagas</span>`;
+    `<span class="px-2 py-0.5 rounded ${casasImpagas ? 'bg-red-900 text-red-300' : 'bg-slate-700 text-slate-400'}">${casasImpagas} impagas</span>` +
+    `<span class="px-2 py-0.5 rounded ${sinCel ? 'bg-amber-900 text-amber-200' : 'bg-slate-700 text-slate-400'}">${sinCel} sin celular</span>`;
   $('tbody').innerHTML = lista.map(r => {
     const quien = r.pago_actualizado ? `Actualizado por ${esc(r.pago_actualizado_por)} el ${esc(r.pago_actualizado.replace('T', ' '))}` : 'Sin cambios registrados';
-    return `<tr class="border-t border-slate-800 hover:bg-slate-800/60">
-      <td class="px-3 py-2 font-semibold whitespace-nowrap">🏠 ${esc(r.casa)}</td>
-      <td class="px-3 py-2">${esc(r.nombre) || '<span class="text-slate-500">—</span>'}</td>
-      <td class="px-3 py-2 whitespace-nowrap text-slate-300">${esc(r.cedula) || '<span class="text-slate-500">—</span>'}</td>
-      <td class="px-3 py-2 whitespace-nowrap">${r.telefono ? '+' + esc(r.telefono) : '<span class="text-amber-400 text-xs">sin celular</span>'}</td>
+    return `<tr class="border-t border-slate-800">
+      <td class="celda px-3 py-2 font-semibold whitespace-nowrap" data-id="${r.id}" data-campo="casa" title="Clic para editar">🏠 ${esc(r.casa)}</td>
+      <td class="celda px-3 py-2" data-id="${r.id}" data-campo="nombre" title="Clic para editar">${esc(r.nombre) || VACIO}</td>
+      <td class="celda px-3 py-2 whitespace-nowrap text-slate-300" data-id="${r.id}" data-campo="cedula" title="Clic para editar">${esc(r.cedula) || VACIO}</td>
+      <td class="celda px-3 py-2 whitespace-nowrap" data-id="${r.id}" data-campo="telefono" title="Clic para editar">${r.telefono ? '+' + esc(r.telefono) : '<span class="text-amber-400 text-xs">sin celular · agregar</span>'}</td>
       <td class="px-3 py-2"><button data-casa="${esc(r.casa)}" data-aldia="${r.al_dia ? 1 : 0}" title="${quien}"
         class="pago text-xs px-3 py-1 rounded-full font-semibold whitespace-nowrap ${r.al_dia ? 'bg-green-700 hover:bg-green-600' : 'bg-red-700 hover:bg-red-600'}">${r.al_dia ? '✅ Al día' : '⛔ Impago'}</button></td>
       <td class="px-3 py-2 text-right"><button data-id="${r.id}" class="borrar text-xs px-2 py-1 rounded bg-slate-700 hover:bg-red-600">Eliminar</button></td>
@@ -124,25 +150,109 @@ async function cargar() {
   render();
 }
 
+// ---------- edición en línea: clic en el dato, Enter guarda, Esc cancela, Tab pasa al siguiente ----------
+const CAMPOS = { nombre: { max: 200, ph: 'Nombre' }, cedula: { max: 20, ph: 'Cédula' }, telefono: { max: 20, ph: '0988391178' } };
+const ORDEN = ['casa', 'nombre', 'cedula', 'telefono'];
+const celdaDe = (id, campo) => document.querySelector(`.celda[data-id="${id}"][data-campo="${campo}"]`);
+function abrir(id, campo) { const td = celdaDe(id, campo); if (td) editar(td); }
+function destacar(id, campo, tipo) {
+  const td = celdaDe(id, campo); if (!td) return;
+  td.classList.add('flash-' + tipo); setTimeout(() => td.classList.remove('flash-' + tipo), 1700);
+}
+
+async function guardarCampo(id, cambios, destino) {
+  const campo = Object.keys(cambios)[0];
+  let res, data = {};
+  try {
+    res = await fetch('/api/residentes/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios) });
+    data = await res.json().catch(() => ({}));
+  } catch (e) { res = { ok: false }; }
+  if (!res.ok) {
+    toast(typeof data.detail === 'string' ? data.detail : 'No se pudo guardar', false);
+    render(); destacar(id, campo, 'error');
+    return;
+  }
+  const i = residentes.findIndex(x => String(x.id) === String(id));
+  if (i >= 0) residentes[i] = data;
+  render(); destacar(id, campo, 'ok'); toast('Guardado ✓');
+  if (destino) abrir(id, destino);
+}
+
+function editar(td) {
+  if (td.querySelector('input')) return;
+  const id = td.dataset.id, campo = td.dataset.campo, r = residentes.find(x => String(x.id) === id);
+  if (!r) return;
+  if (campo === 'casa') return editarCasa(td, r);
+  const original = (r[campo] || '').toString();
+  td.innerHTML = `<input class="w-full min-w-[9rem] rounded bg-slate-950 border border-indigo-400 px-2 py-1 text-sm text-slate-100 outline-none"
+    maxlength="${CAMPOS[campo].max}" value="${esc(original)}" placeholder="${CAMPOS[campo].ph}">`;
+  const input = td.querySelector('input'); input.focus(); input.select();
+  let cerrado = false;
+  const cerrar = (guardar, destino) => {
+    if (cerrado) return; cerrado = true;
+    const nuevo = input.value.trim();
+    if (guardar && nuevo !== original.trim()) guardarCampo(id, { [campo]: nuevo }, destino);
+    else { render(); if (destino) abrir(id, destino); }
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); cerrar(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); cerrar(false); }
+    else if (e.key === 'Tab') { e.preventDefault(); cerrar(true, ORDEN[ORDEN.indexOf(campo) + (e.shiftKey ? -1 : 1)]); }
+  });
+  input.addEventListener('blur', () => cerrar(true));
+}
+
+// La casa se edita con dos casillas (Mz y Villa) para que el formato "Mz X Villa Y" quede siempre igual
+function editarCasa(td, r) {
+  const m = (r.casa || '').match(/^Mz\s+(.+?)\s+Villa\s+(.+)$/i);
+  const estilo = 'rounded bg-slate-950 border border-indigo-400 px-2 py-1 text-sm text-slate-100 outline-none';
+  td.innerHTML = `<div class="flex items-center gap-1 whitespace-nowrap">
+    <span class="text-xs text-slate-400">Mz</span><input class="ed-mz w-20 ${estilo}" maxlength="50" value="${esc(m ? m[1] : r.casa)}">
+    <span class="text-xs text-slate-400">Villa</span><input class="ed-vi w-20 ${estilo}" maxlength="50" value="${esc(m ? m[2] : '')}"></div>`;
+  const imz = td.querySelector('.ed-mz'), ivi = td.querySelector('.ed-vi');
+  imz.focus(); imz.select();
+  let cerrado = false;
+  const cerrar = (guardar, destino) => {
+    if (cerrado) return; cerrado = true;
+    const mz = imz.value.trim(), vi = ivi.value.trim(), nueva = `Mz ${mz} Villa ${vi}`;
+    if (guardar && mz && vi && nueva !== r.casa) guardarCampo(r.id, { casa: nueva }, destino);
+    else {
+      if (guardar && (!mz || !vi)) toast('La manzana y la villa son obligatorias', false);
+      render(); if (destino) abrir(r.id, destino);
+    }
+  };
+  for (const inp of [imz, ivi]) {
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); cerrar(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); cerrar(false); }
+      else if (e.key === 'Tab' && inp === ivi && !e.shiftKey) { e.preventDefault(); cerrar(true, 'nombre'); }
+    });
+  }
+  td.addEventListener('focusout', ev => { if (!td.contains(ev.relatedTarget)) cerrar(true); });   // salir de las dos casillas guarda
+}
+
+// ---------- alta manual ----------
 $('form').onsubmit = async e => {
   e.preventDefault();
   const casa = `Mz ${$('mz').value.trim()} Villa ${$('villa').value.trim()}`;
   const res = await fetch('/api/residentes', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ telefono: $('telefono').value, casa, nombre: $('nombre').value.trim() || null }),
+    body: JSON.stringify({ telefono: $('telefono').value.trim() || null, casa, nombre: $('nombre').value.trim() || null,
+                           cedula: $('cedula').value.trim() || null }),
   });
   const data = await res.json();
-  if (!res.ok) return aviso(data.detail || 'Error al guardar', false);
-  aviso(`Guardado: ${data.casa} · +${data.telefono}`, true);
+  if (!res.ok) return aviso(typeof data.detail === 'string' ? data.detail : 'Error al guardar', false);
+  aviso(`Guardado: ${data.casa}${data.telefono ? ' · +' + data.telefono : ' (sin celular: se puede completar haciendo clic en la tabla)'}`, true);
   $('form').reset(); $('mz').focus();
   cargar();
 };
 
+// ---------- acciones de la tabla ----------
 $('tbody').onclick = async e => {
   const p = e.target.closest('.pago');
   if (p) {
     const casa = p.dataset.casa, estabaAlDia = p.dataset.aldia === '1';
-    if (estabaAlDia && !confirm(`¿Marcar la casa ${casa} como IMPAGA?\nDejará de poder recibir visitas (aplica a todos sus celulares).`)) return;
+    if (estabaAlDia && !confirm(`¿Marcar la casa ${casa} como IMPAGA?\nDejará de poder recibir visitas (aplica a todas las personas de la casa).`)) return;
     const res = await fetch('/api/casas/pago', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ casa, al_dia: !estabaAlDia }),
@@ -151,12 +261,16 @@ $('tbody').onclick = async e => {
     else aviso(`${casa}: ${!estabaAlDia ? 'al día ✅' : 'impaga ⛔'}`, true);
     return cargar();
   }
-  const b = e.target.closest('.borrar'); if (!b) return;
-  const r = residentes.find(x => String(x.id) === b.dataset.id);
-  if (!confirm(`¿Eliminar a ${r ? (r.nombre || 'este residente') + ' (' + r.casa + ')' : ''}?\nDejará de poder pre-autorizar por WhatsApp. Sus visitas ya registradas se conservan.`)) return;
-  const res = await fetch('/api/residentes/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' });
-  if (!res.ok) return aviso((await res.json()).detail || 'Error al eliminar', false);
-  cargar();
+  const b = e.target.closest('.borrar');
+  if (b) {
+    const r = residentes.find(x => String(x.id) === b.dataset.id);
+    if (!confirm(`¿Eliminar a ${r ? (r.nombre || 'este residente') + ' (' + r.casa + ')' : ''}?\nDejará de poder pre-autorizar por WhatsApp. Sus visitas ya registradas se conservan.`)) return;
+    const res = await fetch('/api/residentes/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' });
+    if (!res.ok) return aviso((await res.json()).detail || 'Error al eliminar', false);
+    return cargar();
+  }
+  const td = e.target.closest('.celda');
+  if (td) editar(td);
 };
 
 // ---------- importar residentes ----------
@@ -170,6 +284,7 @@ function impResumen(d, aplicado) {
     ${chip(`${r.filas_leidas} filas leídas`)}${chip(`${r.filas_validas} válidas`, 'bg-green-900 text-green-300')}
     ${r.filas_con_error ? chip(`${r.filas_con_error} con error (se omiten)`, 'bg-red-900 text-red-300') : ''}
     ${chip(`${r.residentes_nuevos} residentes ${aplicado ? 'nuevos' : 'por agregar'}`)}${chip(`${r.residentes_actualizados} ${aplicado ? 'actualizados' : 'por actualizar'}`)}
+    ${r.sin_celular ? chip(`${r.sin_celular} sin celular`, 'bg-amber-900 text-amber-200') : ''}
     ${chip(`${r.casas_en_archivo} casas (${r.casas_nuevas} nuevas)`)}${chip(`${r.casas_al_dia} al día`, 'bg-green-900 text-green-300')}${chip(`${r.casas_impagas} impagas`, r.casas_impagas ? 'bg-red-900 text-red-300' : 'bg-slate-700')}
     ${r.cambios_de_pago ? chip(`${r.cambios_de_pago} cambian su estado de pago`, 'bg-amber-900 text-amber-200') : ''}</div>`;
   if (d.cambios_de_pago.length) {
@@ -177,7 +292,7 @@ function impResumen(d, aplicado) {
       <ul class="mt-1 text-slate-300 max-h-40 overflow-y-auto">${d.cambios_de_pago.map(c => `<li>${esc(c.casa)}: ${c.de} → <b>${c.a}</b></li>`).join('')}</ul></details>`;
   }
   if (d.avisos.length) {
-    h += `<details class="text-sm"><summary class="cursor-pointer text-amber-300">Avisos (${d.avisos.length})</summary>
+    h += `<details class="text-sm"><summary class="cursor-pointer text-amber-300">Avisos (${d.avisos.length}): se cargaron igual</summary>
       <ul class="mt-1 text-slate-300 max-h-40 overflow-y-auto">${d.avisos.map(a => `<li>Fila ${a.fila}: ${esc(a.motivo)}</li>`).join('')}</ul></details>`;
   }
   if (d.errores.length) {

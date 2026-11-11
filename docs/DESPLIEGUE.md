@@ -35,13 +35,16 @@ proveedor** (suelen costar ~20 % más): son tu segunda red de seguridad.
 Conéctate como `root` (`ssh root@IP_DEL_SERVIDOR`) y ejecuta:
 
 ```bash
-apt update && apt upgrade -y
+export DEBIAN_FRONTEND=noninteractive                # evita pantallas interactivas durante las actualizaciones
+apt-get update && apt-get -y -o Dpkg::Options::="--force-confold" upgrade
 timedatectl set-timezone America/Guayaquil          # horas de los registros y del cron en hora de Ecuador
 
-# Usuario de trabajo (no uses root para el día a día)
+# Usuario de trabajo (no uses root para el día a día). Sin contraseña: entra con la clave SSH y usa sudo sin clave
 adduser --disabled-password --gecos "" bitacora
 usermod -aG sudo bitacora
-rsync --archive --chown=bitacora:bitacora ~/.ssh /home/bitacora
+echo "bitacora ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-bitacora && chmod 440 /etc/sudoers.d/90-bitacora
+mkdir -p /home/bitacora/.ssh && cp /root/.ssh/authorized_keys /home/bitacora/.ssh/authorized_keys
+chown -R bitacora:bitacora /home/bitacora/.ssh && chmod 700 /home/bitacora/.ssh && chmod 600 /home/bitacora/.ssh/authorized_keys
 
 # Firewall: solo SSH, web y HTTPS
 ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp && ufw --force enable
@@ -89,7 +92,7 @@ openssl rand -hex 16    # -> EVOLUTION_DB_PASSWORD
 ```
 
 Edita `nano .env` y completa: `DOMINIO`, `OPENAI_API_KEY`, `ADMIN_USUARIO`, `ADMIN_PASSWORD` (clave temporal larga) y las tres
-claves de arriba. Los valores faltantes hacen que `docker compose` falle con un mensaje claro en vez de arrancar mal.
+claves de arriba. Opcional: `ADMIN_TELEFONOS` (celulares de administradores, separados por coma) para pedir por WhatsApp «reporte de hoy / ayer / semana». Los valores faltantes hacen que `docker compose` falle con un mensaje claro en vez de arrancar mal.
 
 ## 4. Arrancar
 ```bash
