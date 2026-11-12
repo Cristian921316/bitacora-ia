@@ -3,6 +3,7 @@
 #   ./scripts/whatsapp.sh crear    crea la línea y conecta su webhook con la app (se hace una sola vez)
 #   ./scripts/whatsapp.sh qr       muestra el QR para vincular el número (WhatsApp > Dispositivos vinculados)
 #   ./scripts/whatsapp.sh estado   dice si el número está conectado
+#   ./scripts/whatsapp.sh ajustes  reduce el tráfico de la línea (ignora grupos y estados, sin historial): más estable
 #   ./scripts/whatsapp.sh salir    desvincula el número (para cambiarlo por otro)
 # Para ver el QR en la terminal conviene:  sudo apt install qrencode
 set -euo pipefail
@@ -26,7 +27,12 @@ case "${1:-}" in
         \"byEvents\": false,
         \"base64\": true,
         \"events\": [\"MESSAGES_UPSERT\"]
-      }
+      },
+      \"groupsIgnore\": true,
+      \"alwaysOnline\": false,
+      \"readMessages\": false,
+      \"readStatus\": false,
+      \"syncFullHistory\": false
     }" > /dev/null
     echo "Línea '$INST' creada. Ahora ejecuta:  ./scripts/whatsapp.sh qr"
     ;;
@@ -54,11 +60,17 @@ case "${1:-}" in
   estado)
     api "$BASE/instance/connectionState/$INST" | campo "['instance']['state']"
     ;;
+  ajustes)
+    api -X POST "$BASE/settings/set/$INST" -d '{
+      "rejectCall": false, "groupsIgnore": true, "alwaysOnline": false,
+      "readMessages": false, "readStatus": false, "syncFullHistory": false
+    }' > /dev/null && echo "Ajustes aplicados (sin grupos, sin estados, sin historial, no siempre en línea)."
+    ;;
   salir)
     api -X DELETE "$BASE/instance/logout/$INST" > /dev/null && echo "Número desvinculado."
     ;;
   *)
-    sed -n '2,8p' "$0"
+    sed -n '2,9p' "$0"
     exit 1
     ;;
 esac

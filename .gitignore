@@ -18,3 +18,5 @@ backups/
 .DS_Store
 respaldos-copia/
 respaldos-servidor/
+
+logs/
