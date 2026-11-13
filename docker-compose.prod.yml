@@ -61,6 +61,13 @@ services:
       CACHE_REDIS_ENABLED: "true"
       CACHE_REDIS_URI: redis://redis:6379/0
       CONFIG_SESSION_PHONE_CLIENT: Bitacora
+      # La bitácora guarda lo suyo: Evolution no necesita almacenar mensajes, contactos ni chats (menos carga y menos fallas).
+      # Se apagan TODAS juntas: dejar MESSAGE_UPDATE activo con las otras apagadas provoca errores de Prisma.
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
     depends_on:
       postgres:
         condition: service_healthy
