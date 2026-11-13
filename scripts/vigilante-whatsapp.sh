@@ -3,7 +3,7 @@
 # Reinicia SOLO el contenedor evolution-api (no toca la base ni la app) si:
 #   - el estado de la instancia ya no es "open", o
 #   - en los últimos minutos aparecieron errores de stream 503 / "stream errored out" (Evolution queda "open" pero sordo).
-# No reinicia más de una vez cada 10 minutos. Registro: logs/vigilante-whatsapp.log
+# Exige 2 o más errores (uno solo puede ser normal al conectar) y solo cuenta los posteriores al último reinicio. No reinicia más de una vez cada 10 minutos. Registro: logs/vigilante-whatsapp.log
 # Instalar:  crontab -e   y agregar:   */3 * * * * /home/bitacora/bitacora-ia/scripts/vigilante-whatsapp.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -18,17 +18,22 @@ LOG=logs/vigilante-whatsapp.log
 MARCA=logs/.vigilante-ultimo-reinicio
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 
+ahora=$(date +%s); ultimo=$(cat "$MARCA" 2>/dev/null || echo 0)
+
 estado="$(curl -fsS -m 10 -H "apikey: ${EVOLUTION_APIKEY}" "$BASE/instance/connectionState/$INST" 2>/dev/null \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['instance']['state'])" 2>/dev/null || echo "sin_respuesta")"
-errores="$(docker compose -f docker-compose.prod.yml logs --since "$VENTANA" evolution-api 2>/dev/null \
+
+# Solo se cuentan errores POSTERIORES al último reinicio (si no, el error viejo provocaría otro reinicio).
+desde="$VENTANA"
+if [ $((ahora - ultimo)) -lt 240 ]; then desde="$(date -u -d "@$ultimo" '+%Y-%m-%dT%H:%M:%SZ')"; fi
+errores="$(docker compose -f docker-compose.prod.yml logs --since "$desde" evolution-api 2>/dev/null \
   | grep -cE 'stream errored out|"code":"503"' || true)"
 
 motivo=""
 [ "$estado" != "open" ] && motivo="estado=$estado"
-[ "${errores:-0}" -gt 0 ] && motivo="${motivo:+$motivo, }errores_stream=$errores"
+[ "${errores:-0}" -ge 2 ] && motivo="${motivo:+$motivo, }errores_stream=$errores"
 [ -z "$motivo" ] && exit 0
 
-ahora=$(date +%s); ultimo=$(cat "$MARCA" 2>/dev/null || echo 0)
 if [ $((ahora - ultimo)) -lt $ENFRIAMIENTO ]; then
   log "Problema ($motivo) pero ya se reinició hace menos de 10 min; espero."; exit 0
 fi
