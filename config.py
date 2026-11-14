@@ -31,10 +31,9 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"  # poner COOKIE_SECURE=1 
 # Una casa impaga no puede recibir visitas (visitas anunciadas, sin aviso ni ingreso). 0 = desactivado.
 BLOQUEO_POR_MORA = os.getenv("BLOQUEO_POR_MORA", "1") == "1"
 
-# WhatsApp (Evolution API)
-EVOLUTION_URL = os.getenv("EVOLUTION_URL", "http://localhost:8080")
-EVOLUTION_APIKEY = os.getenv("EVOLUTION_APIKEY", "")
-EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "bitacora")
+# WhatsApp (Whapi.Cloud): token del canal y secreto que va en la URL del webhook
+WHAPI_URL = os.getenv("WHAPI_URL", "https://gate.whapi.cloud")
+WHAPI_TOKEN = os.getenv("WHAPI_TOKEN", "")
 WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN", "")
 # Celulares de administradores que pueden pedir el resumen por WhatsApp ("reporte de hoy"). Separados por coma.
 ADMIN_TELEFONOS = os.getenv("ADMIN_TELEFONOS", "")

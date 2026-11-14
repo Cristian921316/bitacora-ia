@@ -53,6 +53,15 @@ def wsp(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def audio_falso(monkeypatch):
+    """Las pruebas no descargan notas de voz de internet."""
+    async def falso(voz):
+        return b"audio-falso"
+
+    monkeypatch.setattr(main.whatsapp, "descargar_audio", falso)
+
+
+@pytest.fixture(autouse=True)
 def sin_admins_del_env(monkeypatch):
     """Las pruebas no deben depender de los números reales que haya en el .env local."""
     monkeypatch.setattr(main.config, "ADMIN_TELEFONOS", "")
@@ -108,9 +117,25 @@ def registrar(admin, telefono="0988391178", casa="Mz 6 Villa 23", nombre="Cristi
     return r.json()
 
 
-def webhook(cliente, telefono, mensaje):
-    cuerpo = {"event": "messages.upsert", "data": {
-        "key": {"remoteJid": f"{telefono}@s.whatsapp.net", "fromMe": False, "id": "X"}, "message": mensaje}}
+def mensaje_whapi(telefono, mensaje, **extra):
+    """Arma un mensaje con el formato del webhook de Whapi. `mensaje` usa una forma corta:
+    {"conversation": "texto"} | {"audioMessage": {}} | {"imageMessage": {}}"""
+    m = {"id": "X", "from_me": False, "chat_id": f"{telefono}@s.whatsapp.net", "from": telefono,
+         "timestamp": 1712995245, "source": "mobile"}
+    if "conversation" in mensaje:
+        m.update(type="text", text={"body": mensaje["conversation"]})
+    elif "audioMessage" in mensaje:
+        m.update(type="voice", voice={"id": "oga-1", "mime_type": "audio/ogg; codecs=opus",
+                                      "link": "https://ejemplo.test/nota.oga"})
+    else:
+        m.update(type="image", image={"id": "img-1"})
+    m.update(extra)
+    return m
+
+
+def webhook(cliente, telefono, mensaje, **extra):
+    cuerpo = {"messages": [mensaje_whapi(telefono, mensaje, **extra)],
+              "event": {"type": "messages", "event": "post"}, "channel_id": "PRUEBA"}
     r = cliente.post("/api/whatsapp/webhook?token=tok", json=cuerpo)
     assert r.status_code == 200, r.text
     return r.json()

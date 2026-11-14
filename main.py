@@ -3,14 +3,14 @@
 Módulos:  config.py (ajustes) · db.py (base de datos portable) · auth.py (login y roles)
           realtime.py (avisos en vivo) · reportes.py (reportes y Excel) · main.py (visitas, residentes, WhatsApp)
 """
-import base64
+import logging
 import os
 import re
+import secrets
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import List, Optional
 
-import httpx
 from fastapi import (BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket,
                      WebSocketDisconnect)
 from fastapi.responses import FileResponse, RedirectResponse
@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 import auth
 import config
 import parametros
+import whatsapp
 from auth import pagina, solo_admin, usuario_actual, usuario_ws
 from db import (accesos, ahora_iso, asegurar_casa, casa_al_dia, casas, clave_casa, engine, fila, init_db,
                 movimientos, registrar_bloqueo, residentes)
@@ -476,25 +477,24 @@ def cambiar_pago(datos: CasaPagoIn, u: dict = Depends(solo_admin)):
     return {"casa": " ".join(datos.casa.split()), "al_dia": datos.al_dia}
 
 
-# ---------- WhatsApp (Evolution API) ----------
-EVOLUTION_URL = config.EVOLUTION_URL
-EVOLUTION_APIKEY = config.EVOLUTION_APIKEY
-EVOLUTION_INSTANCE = config.EVOLUTION_INSTANCE
+# ---------- WhatsApp (Whapi.Cloud, conexión directa: ver whatsapp.py) ----------
 WEBHOOK_TOKEN = config.WEBHOOK_TOKEN
 
 
-async def evolution_post(path: str, payload: dict) -> dict:
-    async with httpx.AsyncClient(timeout=30) as http:
-        resp = await http.post(
-            f"{EVOLUTION_URL}{path}", json=payload, headers={"apikey": EVOLUTION_APIKEY}
-        )
-        resp.raise_for_status()
-        return resp.json()
+class _OcultarToken(logging.Filter):
+    """El token del webhook viaja en la URL: que no quede escrito en los registros de acceso."""
+    def filter(self, record):
+        record.args = tuple(re.sub(r"token=[^\s&\"]+", "token=***", a) if isinstance(a, str) else a
+                            for a in (record.args or ()))
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_OcultarToken())
 
 
 async def responder_wsp(numero: str, texto: str) -> None:
     try:
-        await evolution_post(f"/message/sendText/{EVOLUTION_INSTANCE}", {"number": numero, "text": texto})
+        await whatsapp.enviar_texto(numero, texto)
     except Exception as exc:
         print(f"[wsp] no se pudo responder a {numero}: {exc}")
 
@@ -715,27 +715,24 @@ async def resolver_solicitud(telefono: str, texto: str) -> Optional[str]:
 
 @app.post("/api/whatsapp/webhook")
 async def whatsapp_webhook(request: Request):
-    if WEBHOOK_TOKEN and request.query_params.get("token") != WEBHOOK_TOKEN:
+    """Whapi llama aquí desde internet: el secreto va en la URL (?token=...). Sin WEBHOOK_TOKEN configurado se rechaza todo."""
+    token = request.query_params.get("token", "")
+    if not WEBHOOK_TOKEN or not secrets.compare_digest(token.encode(), WEBHOOK_TOKEN.encode()):
         raise HTTPException(401, "Token inválido")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Cuerpo inválido")
+    resultados = [await procesar_mensaje_wsp(m["telefono"], m["texto"], m["voz"])
+                  for m in whatsapp.extraer_mensajes(body)]
+    if not resultados:
+        return {"ok": True, "ignorado": "no es un mensaje nuevo de una persona"}
+    return resultados[0] if len(resultados) == 1 else {"ok": True, "mensajes": resultados}
 
-    body = await request.json()
-    event = str(body.get("event", "")).lower().replace("_", ".")
-    if event != "messages.upsert":
-        return {"ok": True, "ignorado": event}
 
-    data = body.get("data") or {}
-    key = data.get("key") or {}
-    if key.get("fromMe"):
-        return {"ok": True, "ignorado": "mensaje propio"}
-
-    jid = key.get("remoteJid", "")
-    if not jid.endswith("@s.whatsapp.net"):
-        return {"ok": True, "ignorado": "no es chat individual"}
-    telefono = solo_digitos(jid.split("@")[0])
-
-    message = data.get("message") or {}
-    texto_msg = message.get("conversation") or (message.get("extendedTextMessage") or {}).get("text")
-    es_audio = "audioMessage" in message
+async def procesar_mensaje_wsp(telefono: str, texto_msg: Optional[str], voz: Optional[dict]) -> dict:
+    """Un mensaje de WhatsApp ya traducido: texto o nota de voz (voz != None) de un celular."""
+    es_audio = voz is not None
     if not es_audio and not texto_msg:
         await responder_wsp(telefono, AYUDA_WSP)
         return {"ok": True, "ignorado": "tipo de mensaje no soportado"}
@@ -743,11 +740,7 @@ async def whatsapp_webhook(request: Request):
     if telefono in telefonos_admin():       # ¿un administrador pide el resumen? (texto o nota de voz)
         try:
             if es_audio:
-                b64 = message.get("base64") or data.get("base64")
-                if not b64:
-                    media = await evolution_post(f"/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}", {"message": {"key": key}})
-                    b64 = media.get("base64")
-                texto_msg = transcribir(base64.b64decode(b64), "nota.ogg", "audio/ogg")
+                texto_msg = transcribir(await whatsapp.descargar_audio(voz), "nota.ogg", "audio/ogg")
                 es_audio = False            # ya está transcrito: si no era un pedido de resumen, sigue como texto normal
             periodo = detectar_periodo(texto_msg or "")
         except Exception as exc:
@@ -785,13 +778,7 @@ async def whatsapp_webhook(request: Request):
 
     try:
         if es_audio:
-            b64 = message.get("base64") or data.get("base64")
-            if not b64:  # Evolution sin WEBHOOK_BASE64: se pide el archivo aparte
-                media = await evolution_post(
-                    f"/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}", {"message": {"key": key}}
-                )
-                b64 = media.get("base64")
-            audio = base64.b64decode(b64)
+            audio = await whatsapp.descargar_audio(voz)
             resultado = await procesar_audio(audio, "nota.ogg", "audio/ogg", casa_forzada=res["casa"],
                                               origen="whatsapp", telefono=telefono)
         else:
@@ -816,6 +803,8 @@ async def whatsapp_webhook(request: Request):
         )
         await responder_wsp(telefono, f"✅ Pre-autorizado en Casa {res['casa']}:\n{lineas}")
     return {"ok": True, "registros": len(regs)}
+
+
 
 
 # ---------- Pantallas ----------

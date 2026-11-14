@@ -3,9 +3,13 @@
 {$DOMINIO} {
 	encode zstd gzip
 
-	# El webhook de WhatsApp es solo interno (Evolution llama a la app por la red de Docker): no se expone a internet
-	@webhook path /api/whatsapp/webhook
-	respond @webhook 404
+	# El webhook de WhatsApp (/api/whatsapp/webhook) queda público porque Whapi llama desde internet.
+	# Lo protege el secreto WEBHOOK_TOKEN de la URL (la app rechaza cualquier llamada sin él) y solo acepta POST.
+	@webhook_no_post {
+		path /api/whatsapp/webhook
+		not method POST
+	}
+	respond @webhook_no_post 405
 
 	header {
 		Strict-Transport-Security "max-age=31536000"

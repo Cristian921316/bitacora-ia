@@ -1,4 +1,4 @@
-# Producción en un VPS: HTTPS (Caddy) + app + WhatsApp (Evolution API con su Postgres y Redis).
+# Producción en un VPS: HTTPS (Caddy) + app. WhatsApp va directo a Whapi.Cloud (sin contenedores propios para WhatsApp).
 # Uso en el servidor:  docker compose up -d --build     (ver docs/DESPLIEGUE.md)
 name: bitacora
 
@@ -34,73 +34,16 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?Falta OPENAI_API_KEY en el archivo .env}
       ADMIN_USUARIO: ${ADMIN_USUARIO:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      EVOLUTION_URL: http://evolution-api:8080
-      EVOLUTION_APIKEY: ${EVOLUTION_APIKEY:?Falta EVOLUTION_APIKEY en el archivo .env}
-      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-bitacora}
+      WHAPI_TOKEN: ${WHAPI_TOKEN:?Falta WHAPI_TOKEN en el archivo .env}
       WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?Falta WEBHOOK_TOKEN en el archivo .env}
       ADMIN_TELEFONOS: ${ADMIN_TELEFONOS:-}
       SESION_HORAS: ${SESION_HORAS:-12}
       BLOQUEO_POR_MORA: ${BLOQUEO_POR_MORA:-1}
     volumes:
       - app_data:/data          # aquí vive bitacora.db (y sus respaldos)
-    depends_on:
-      - evolution-api
-    logging: *logging
-
-  evolution-api:
-    image: evoapicloud/evolution-api:v2.3.7
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${EVOLUTION_HOST_PORT:-8080}:8080"   # solo desde el propio servidor (QR por túnel SSH), nunca público
-    environment:
-      TZ: America/Guayaquil
-      SERVER_URL: http://evolution-api:8080
-      AUTHENTICATION_API_KEY: ${EVOLUTION_APIKEY}
-      DATABASE_PROVIDER: postgresql
-      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_DB_PASSWORD:?Falta EVOLUTION_DB_PASSWORD en el archivo .env}@postgres:5432/evolution
-      CACHE_REDIS_ENABLED: "true"
-      CACHE_REDIS_URI: redis://redis:6379/0
-      CONFIG_SESSION_PHONE_CLIENT: Bitacora
-      # La bitácora guarda lo suyo: Evolution no necesita almacenar mensajes, contactos ni chats (menos carga y menos fallas).
-      # Se apagan TODAS juntas: dejar MESSAGE_UPDATE activo con las otras apagadas provoca errores de Prisma.
-      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
-      DATABASE_SAVE_MESSAGE_UPDATE: "false"
-      DATABASE_SAVE_DATA_CONTACTS: "false"
-      DATABASE_SAVE_DATA_CHATS: "false"
-      DATABASE_SAVE_DATA_HISTORIC: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    volumes:
-      - evolution_instances:/evolution/instances   # la vinculación del número de WhatsApp: no borrar
-    logging: *logging
-
-  postgres:
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: evolution
-      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASSWORD}
-      POSTGRES_DB: evolution
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    logging: *logging
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
     logging: *logging
 
 volumes:
   app_data:
   caddy_data:
   caddy_config:
-  evolution_instances:
-  postgres_data:

@@ -18,7 +18,8 @@ del residente por WhatsApp, reportes en Excel, login con 2 roles y estado de pag
 ## Estructura
 | Archivo | Para qué |
 |---|---|
-| `main.py` | Rutas: visitas, residentes, estado de pago, WhatsApp (Evolution API), pantallas |
+| `main.py` | Rutas: visitas, residentes, estado de pago, WhatsApp (webhook), pantallas |
+| `whatsapp.py` | Conexión directa con Whapi.Cloud: enviar texto, bajar audios y traducir su webhook |
 | `parametros.py` | Parámetros que el admin cambia en `/configuracion` (vigencia, control de salidas, tiempo de rechazo) y cálculo de «Vencida» |
 | `importar.py` | Importar residentes desde Excel/CSV (revisar y confirmar) y plantilla descargable |
 | `util.py` | Utilidades (normalizar celulares) |
@@ -30,8 +31,7 @@ del residente por WhatsApp, reportes en Excel, login con 2 roles y estado de pag
 | `reportes.py` | Reportes (solo ADMIN): pantalla, CSV y Excel |
 | `static/` | Pantallas HTML (Tailwind CDN + JS); `static/assets/nav.js` = menú según el rol |
 | `scripts/migrar_a_postgres.py` | Copia los datos de SQLite a PostgreSQL |
-| `tests/` | 75 pruebas automáticas (`pytest`, SQLite) |
-| `docker-compose.yml` | Evolution API (WhatsApp no oficial) + Postgres + Redis propios de Evolution |
+| `tests/` | 105 pruebas automáticas (`pytest`, SQLite) |
 
 ## Cómo correrlo
 ```bash
@@ -95,9 +95,9 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Guía paso a paso: `docs/DESPLIEGUE.md`. Archivos: `Dockerfile`, `docker-compose.prod.yml`, `deploy/Caddyfile`,
   `.env.prod.example`, `requirements.lock` (versiones exactas probadas; las directas coinciden con las que funcionaron con
   OpenAI real, p. ej. `openai==2.48.0`).
-- Stack: Caddy (HTTPS automático) + app (FastAPI + SQLite en el volumen `/data`) + Evolution API (+ su Postgres y Redis).
-  Solo se publican 80/443; Evolution queda en `127.0.0.1` y el webhook de WhatsApp es solo interno (Caddy lo bloquea).
-- Scripts (en el servidor): `scripts/whatsapp.sh` (crear/qr/estado/salir), `scripts/respaldo.sh`, `scripts/restaurar.sh`.
+- Stack: Caddy (HTTPS automático) + app (FastAPI + SQLite en el volumen `/data`). WhatsApp va directo a Whapi.Cloud (sin contenedores propios).
+  Solo se publican 80/443; el webhook `/api/whatsapp/webhook?token=...` es público (Whapi llama desde internet) y exige `WEBHOOK_TOKEN`; el token se oculta en los registros de acceso.
+- Scripts (en el servidor): `scripts/whatsapp.sh` (estado/url/webhook/enviar, para Whapi), `scripts/respaldo.sh`, `scripts/restaurar.sh`.
   Ninguno borra archivos; la restauración usa la API de respaldo de SQLite y guarda antes el estado actual.
 - La app corre con `--proxy-headers` (IP real detrás de Caddy, necesaria para el bloqueo de login por IP), un solo proceso,
   usuario sin privilegios y `TZ=America/Guayaquil`.
@@ -145,12 +145,12 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Para futuras actualizaciones: `./scripts/respaldo.sh` → `git pull` → `docker compose up -d --build` → `docker compose ps` y logs →
   `./scripts/whatsapp.sh estado`. Cambiar de dominio = editar `DOMINIO` en el `.env` + `docker compose up -d` (los usuarios deben volver a entrar).
   Reversa: `git checkout <commit_anterior>` + `docker compose up -d --build`; si hubo migración, restaurar el respaldo previo.
-- Producción: droplet DigitalOcean NYC (2 vCPU / 2 GB, se recomienda 4 GB), SQLite en el volumen `app_data`, Evolution + su Postgres/Redis.
+- Producción: droplet DigitalOcean NYC (ya a 4 GB), SQLite en el volumen `app_data`.
 - Sin hacer aún: cargar la lista real en producción («Revisar archivo» y confirmar, con respaldo antes), respaldo nocturno (cron),
   subir a 4 GB, endurecer SSH, borrar ADMIN_PASSWORD del .env, monitor externo de /salud, snapshots del proveedor.
 
 ## Entorno local y precauciones
-- La base local (`bitacora.db`) tiene la lista REAL (784 residentes, 467 con celular) y WhatsApp local vinculado a un número propio:
+- La base local (`bitacora.db`) tiene la lista REAL (784 residentes, 467 con celular) y, si se vincula WhatsApp en local, necesita un túnel público para el webhook de Whapi (o se prueba con curl):
   NO enviar solicitudes a casas reales; probar con una casa propia (p. ej. Mz 99 Villa 99 con un segundo teléfono).
   Idea sin decidir: lista blanca de números en local.
 - Reiniciar el servidor local tras cambios de backend (uvicorn no recarga solo): una pantalla nueva con backend viejo parece «no encuentra».
@@ -167,3 +167,13 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
   modo silencioso y topes de WhatsApp, API oficial de Meta, varios conjuntos, extraer la fecha de la visita («mañana»),
   compilar Tailwind (hoy CDN), respaldo automático activo.
 - Safari graba audio en MP4 pero el frontend lo envía como `.webm` (usar Chrome en la pantalla de demostración).
+
+## WhatsApp: del Evolution a Whapi (rama `whapi-directo`, 2026-11-13)
+- Evolution/Baileys se quedaba «open» pero sordo tras horas (sin errores en el log; un reinicio no lo arreglaba, solo revincular). Se reemplazó
+  por consumo directo de Whapi.Cloud (`whatsapp.py`): sin Evolution, Postgres ni Redis; sin vigilante ni ajustes de instancia.
+- Whapi tampoco es la API oficial de Meta (se vincula como dispositivo por QR, igual que WhatsApp Web). Sus reglas: calentar el número,
+  abrir WhatsApp en el celular cada 10–12 días (a los 14 se desvincula) y no enviar masivo. Plan de fondo: API oficial (YCloud con coexistencia
+  exige WhatsApp Business, verificación del negocio y plantillas para mensajes iniciados por el bot).
+- Variables nuevas: `WHAPI_TOKEN`, `WEBHOOK_TOKEN` (en la URL del webhook), opcional `WHAPI_URL`. Quedaron obsoletas `EVOLUTION_*` (se pueden borrar del `.env`).
+- Por verificar en la primera prueba real: descarga de audios por `/media/{id}` (si no hay Auto Download), y que `from` traiga el teléfono
+  cuando WhatsApp use identificadores `@lid`.
