@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text,
-    create_engine, event, inspect, insert, select, true,
+    create_engine, event, inspect, insert, or_, select, true,
 )
 
 import config
@@ -63,9 +63,23 @@ residentes = Table(
     Column("cedula", String(20)),          # puede repetirse: la lista de residentes no siempre es limpia
     Column("nombre", Text),
     Column("casa", Text, nullable=False),
+    Column("telefono2", String(20), unique=True),   # segundo celular de la MISMA persona (esposa, hija…)
+    Column("alias2", String(100)),                  # cómo se llama ese número (solo lo ve el administrador)
     Index("ix_residentes_cedula", "cedula"),
     sqlite_autoincrement=True,
 )
+
+
+def con_telefono(telefono: str):
+    """Condición SQL: el celular es el principal o el segundo celular de la persona (las dos puertas de entrada)."""
+    return or_(residentes.c.telefono == telefono, residentes.c.telefono2 == telefono)
+
+
+def telefonos_de(r) -> list:
+    """Los celulares de una persona (fila o dict), sin vacíos."""
+    g = r.get if isinstance(r, dict) else (lambda k: getattr(r, k, None))
+    return [t for t in (g("telefono"), g("telefono2")) if t]
+
 
 # Estado de pago POR CASA (una casa puede tener varios celulares).
 casas = Table(

@@ -25,7 +25,7 @@ import config
 import parametros
 import whatsapp
 from auth import pagina, solo_admin, usuario_actual, usuario_ws
-from db import (accesos, ahora_iso, asegurar_casa, casa_al_dia, casas, clave_casa, engine, fila, init_db,
+from db import (accesos, ahora_iso, asegurar_casa, casa_al_dia, casas, clave_casa, con_telefono, engine, fila, init_db, telefonos_de,
                 movimientos, registrar_bloqueo, residentes)
 from importar import router as importar_router
 from realtime import manager, vista_para
@@ -76,6 +76,8 @@ class ResidenteIn(BaseModel):
     casa: str
     nombre: Optional[str] = None
     cedula: Optional[str] = None
+    telefono2: Optional[str] = None   # segundo celular de la misma persona (esposa, hija…); opcional
+    alias2: Optional[str] = None      # cómo se llama ese número; solo lo ve el administrador
 
 
 class ResidentePatch(BaseModel):
@@ -84,6 +86,8 @@ class ResidentePatch(BaseModel):
     cedula: Optional[str] = None
     telefono: Optional[str] = None
     casa: Optional[str] = None
+    telefono2: Optional[str] = None
+    alias2: Optional[str] = None
 
 
 class CasaPagoIn(BaseModel):
@@ -353,6 +357,35 @@ async def cambiar_estado(acceso_id: int, cambio: CambioEstado, background: Backg
 
 
 # ---------- Residentes y estado de pago ----------
+MAX_ALIAS = 100
+
+
+def _celular_valido(crudo: str) -> str:
+    tel = normalizar_telefono(crudo)
+    if not 11 <= len(tel) <= 15:
+        raise HTTPException(400, "Celular inválido: use el formato 0988391178 o 593988391178")
+    return tel
+
+
+def _alias_valido(crudo: Optional[str]) -> Optional[str]:
+    alias = " ".join((crudo or "").split())
+    if len(alias) > MAX_ALIAS:
+        raise HTTPException(400, f"El alias admite hasta {MAX_ALIAS} caracteres")
+    return alias or None
+
+
+def _dueno_del_celular(conn, tel: str, excepto_id: Optional[int] = None) -> Optional[dict]:
+    """Quién tiene ese celular, sea como principal o como segundo celular (nunca puede estar en dos personas)."""
+    q = select(residentes).where(con_telefono(tel))
+    if excepto_id is not None:
+        q = q.where(residentes.c.id != excepto_id)
+    return fila(conn.execute(q).first())
+
+
+def _error_celular_ajeno(otro: dict) -> HTTPException:
+    return HTTPException(409, f"Ese celular ya lo tiene {otro['nombre'] or 'otra persona'} ({otro['casa']})")
+
+
 @app.post("/api/residentes")
 def registrar_residente(r: ResidenteIn, _: dict = Depends(solo_admin)):
     """Registra a una persona en una casa. El celular (WhatsApp) es opcional y se puede completar después.
@@ -366,21 +399,33 @@ def registrar_residente(r: ResidenteIn, _: dict = Depends(solo_admin)):
     cedula = (r.cedula or "").replace(" ", "").strip() or None
     if cedula and len(cedula) > 20:
         raise HTTPException(400, "La cédula admite hasta 20 caracteres")
-    tel = None
-    if (r.telefono or "").strip():
-        tel = normalizar_telefono(r.telefono)
-        if not 11 <= len(tel) <= 15:
-            raise HTTPException(400, "Celular inválido: use el formato 0988391178 o 593988391178")
+    tel = _celular_valido(r.telefono) if (r.telefono or "").strip() else None
+    tel2 = _celular_valido(r.telefono2) if (r.telefono2 or "").strip() else None
+    if tel2 and tel2 == tel:
+        raise HTTPException(400, "El celular 2 debe ser distinto del celular principal")
+    alias2 = _alias_valido(r.alias2) if tel2 else None     # el alias solo tiene sentido con un celular 2
     with engine.begin() as conn:
-        if tel and conn.execute(select(residentes.c.id).where(residentes.c.telefono == tel)).first():
-            conn.execute(update(residentes).where(residentes.c.telefono == tel).values(casa=casa, nombre=nombre))
+        dueno = _dueno_del_celular(conn, tel) if tel else None
+        if dueno and dueno["telefono"] != tel:
+            raise _error_celular_ajeno(dueno)               # ya es el celular 2 de otra persona
+        propio_id = dueno["id"] if dueno else None
+        if tel2:
+            otro = _dueno_del_celular(conn, tel2, excepto_id=propio_id)
+            if otro:
+                raise _error_celular_ajeno(otro)
+        if dueno:
+            cambios = {"casa": casa, "nombre": nombre}
+            if tel2:
+                cambios.update(telefono2=tel2, alias2=alias2)
+            conn.execute(update(residentes).where(residentes.c.id == propio_id).values(**cambios))
         elif not tel and nombre and conn.execute(select(residentes.c.id).where(
                 func.lower(residentes.c.nombre) == nombre.lower(), residentes.c.casa == casa)).first():
             raise HTTPException(409, "Esa persona ya está registrada en esa casa")
         else:
-            conn.execute(insert(residentes).values(telefono=tel, cedula=cedula, nombre=nombre, casa=casa))
+            conn.execute(insert(residentes).values(telefono=tel, cedula=cedula, nombre=nombre, casa=casa,
+                                                   telefono2=tel2, alias2=alias2))
         asegurar_casa(conn, casa)
-    return {"telefono": tel, "casa": casa, "nombre": nombre, "cedula": cedula}
+    return {"telefono": tel, "casa": casa, "nombre": nombre, "cedula": cedula, "telefono2": tel2, "alias2": alias2}
 
 
 def _con_pago(r: dict, pagos: dict) -> dict:
@@ -416,13 +461,14 @@ def editar_residente(rid: int, datos: ResidentePatch, _: dict = Depends(solo_adm
         cambios["cedula"] = cedula or None
     if "telefono" in campos:
         crudo = (campos["telefono"] or "").strip()
+        cambios["telefono"] = _celular_valido(crudo) if crudo else None     # vaciar el campo quita el celular
+    if "telefono2" in campos:
+        crudo = (campos["telefono2"] or "").strip()
+        cambios["telefono2"] = _celular_valido(crudo) if crudo else None
         if not crudo:
-            cambios["telefono"] = None          # vaciar el campo quita el celular
-        else:
-            tel = normalizar_telefono(crudo)
-            if not 11 <= len(tel) <= 15:
-                raise HTTPException(400, "Celular inválido: use el formato 0988391178 o 593988391178")
-            cambios["telefono"] = tel
+            cambios["alias2"] = None            # sin celular 2 no queda alias
+    if "alias2" in campos and "alias2" not in cambios:
+        cambios["alias2"] = _alias_valido(campos["alias2"])
     if "casa" in campos:
         casa = " ".join((campos["casa"] or "").split())
         if not casa:
@@ -438,11 +484,17 @@ def editar_residente(rid: int, datos: ResidentePatch, _: dict = Depends(solo_adm
             actual = fila(conn.execute(select(residentes).where(residentes.c.id == rid)).first())
             if not actual:
                 raise HTTPException(404, "Residente no encontrado")
-            if cambios.get("telefono"):
-                otro = fila(conn.execute(select(residentes).where(
-                    residentes.c.telefono == cambios["telefono"], residentes.c.id != rid)).first())
-                if otro:
-                    raise HTTPException(409, f"Ese celular ya lo tiene {otro['nombre'] or 'otra persona'} ({otro['casa']})")
+            tel_final = cambios["telefono"] if "telefono" in cambios else actual["telefono"]
+            tel2_final = cambios["telefono2"] if "telefono2" in cambios else actual["telefono2"]
+            if tel_final and tel_final == tel2_final:
+                raise HTTPException(400, "El celular 2 debe ser distinto del celular principal")
+            if cambios.get("alias2") and not tel2_final:
+                raise HTTPException(400, "Primero escribe el celular 2 y después su alias")
+            for tel in (cambios.get("telefono"), cambios.get("telefono2")):
+                if tel:
+                    otro = _dueno_del_celular(conn, tel, excepto_id=rid)
+                    if otro:
+                        raise _error_celular_ajeno(otro)
             conn.execute(update(residentes).where(residentes.c.id == rid).values(**cambios))
             if "casa" in cambios:
                 asegurar_casa(conn, cambios["casa"])
@@ -512,9 +564,9 @@ TIPOS_TXT = {"VISITA": "Visita", "DELIVERY": "Delivery", "TAXI_UBER": "Taxi/Uber
 
 def telefonos_de_casa(casa: str) -> List[str]:
     with engine.connect() as conn:
-        return [r[0] for r in conn.execute(
-            select(residentes.c.telefono).where(func.lower(residentes.c.casa) == " ".join(casa.lower().split()),
-                                                residentes.c.telefono.is_not(None)))]
+        filas = conn.execute(select(residentes.c.telefono, residentes.c.telefono2)
+                             .where(func.lower(residentes.c.casa) == " ".join(casa.lower().split()))).all()
+    return [t for r in filas for t in telefonos_de(r)]
 
 
 async def notificar_ingreso(reg: dict, sin_respuesta: bool = False) -> None:
@@ -541,12 +593,13 @@ def _casas_que_coinciden(conn, mz: str, villa: str) -> list:
     """Casas guardadas cuya manzana y villa, en forma suelta, equivalen a lo escrito (1 = 01, 12A = 12-A)."""
     buscado = (_suelto(mz), _suelto(villa))
     casas: dict = {}
-    for r in conn.execute(select(residentes.c.id, residentes.c.nombre, residentes.c.telefono, residentes.c.casa)
+    for r in conn.execute(select(residentes.c.id, residentes.c.nombre, residentes.c.telefono, residentes.c.telefono2,
+                                 residentes.c.casa)
                           .order_by(residentes.c.nombre, residentes.c.id)).all():
         m = re.match(r"^Mz\s+(.+?)\s+Villa\s+(.+)$", r.casa or "", re.I)
         if m and (_suelto(m.group(1)), _suelto(m.group(2))) == buscado:
             g = casas.setdefault(r.casa, {"casa": r.casa, "mz": m.group(1), "villa": m.group(2), "residentes": []})
-            g["residentes"].append({"id": r.id, "nombre": r.nombre or "Sin nombre", "avisable": bool(r.telefono)})
+            g["residentes"].append({"id": r.id, "nombre": r.nombre or "Sin nombre", "avisable": bool(telefonos_de(r))})
     return sorted(casas.values(), key=lambda g: (g["mz"], g["villa"]))
 
 
@@ -622,7 +675,7 @@ async def visita_sin_aviso(v: SinAviso, background: BackgroundTasks, u: dict = D
 
     # ¿a quién se le pregunta? A los elegidos por el guardia; si no eligió, a todos los de la casa
     with engine.connect() as conn:
-        de_casa = conn.execute(select(residentes.c.id, residentes.c.nombre, residentes.c.telefono)
+        de_casa = conn.execute(select(residentes.c.id, residentes.c.nombre, residentes.c.telefono, residentes.c.telefono2)
                                .where(func.lower(residentes.c.casa) == clave_casa(casa))).all()
     if v.residente_ids is None:
         elegidos = de_casa
@@ -630,8 +683,8 @@ async def visita_sin_aviso(v: SinAviso, background: BackgroundTasks, u: dict = D
         elegidos = [r for r in de_casa if r.id in set(v.residente_ids)]
         if v.residente_ids and not elegidos:
             raise HTTPException(400, "Las personas elegidas no pertenecen a esa casa")
-    avisables = [r for r in elegidos if r.telefono]
-    telefonos = [r.telefono for r in avisables]
+    avisables = [r for r in elegidos if telefonos_de(r)]
+    telefonos = [t for r in avisables for t in telefonos_de(r)]        # cada persona recibe en sus dos celulares
     preguntado_a = [r.nombre or "Residente" for r in avisables]
     quien = f"Sin aviso (se preguntó a {', '.join(preguntado_a)[:150]})" if preguntado_a else "Sin aviso (registrado en garita)"
 
@@ -648,7 +701,7 @@ async def visita_sin_aviso(v: SinAviso, background: BackgroundTasks, u: dict = D
     await manager.broadcast({"evento": "nuevo", "registro": reg})
     if telefonos:
         background.add_task(notificar_solicitud, reg, telefonos)
-    return {"registro": vista_para(u["rol"], reg), "residentes_avisados": len(telefonos), "preguntado_a": preguntado_a}
+    return {"registro": vista_para(u["rol"], reg), "residentes_avisados": len(avisables), "preguntado_a": preguntado_a}
 
 
 RESP_SI = {"1", "si", "ok", "dale", "autorizo", "autorizar", "acepto", "adelante"}
@@ -668,7 +721,7 @@ async def resolver_solicitud(telefono: str, texto: str) -> Optional[str]:
         return None
     aprobar = m.group(1) in RESP_SI
     ref = int(m.group(2)) if m.group(2) else None
-    mis_casas = select(func.lower(residentes.c.casa)).where(residentes.c.telefono == telefono)
+    mis_casas = select(func.lower(residentes.c.casa)).where(con_telefono(telefono))
     with engine.connect() as conn:
         pendientes = [fila(r) for r in conn.execute(
             select(accesos).where(accesos.c.estado == "PENDIENTE", func.lower(accesos.c.casa).in_(mis_casas),
@@ -753,7 +806,7 @@ async def procesar_mensaje_wsp(telefono: str, texto_msg: Optional[str], voz: Opt
             return {"ok": True, "resumen": periodo}
 
     with engine.connect() as conn:
-        res = fila(conn.execute(select(residentes.c.casa).where(residentes.c.telefono == telefono)).first())
+        res = fila(conn.execute(select(residentes.c.casa).where(con_telefono(telefono))).first())
     if not res and telefono in telefonos_admin():
         await responder_wsp(telefono, AYUDA_ADMIN)
         return {"ok": True, "ignorado": "administrador sin pedido de resumen"}

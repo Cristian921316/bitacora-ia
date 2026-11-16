@@ -42,10 +42,13 @@ SINONIMOS = {
     "villa": {"villa", "lote", "casa", "solar"},
     "pago": {"estado de pago", "status de pago", "status", "estado", "pago", "situacion de pago", "situacion"},
     "celular": {"celular", "telefono", "movil", "whatsapp", "cel", "numero de celular", "celular whatsapp"},
+    "celular2": {"celular 2", "celular2", "telefono 2", "telefono2", "segundo celular", "celular adicional",
+                 "celular secundario", "whatsapp 2"},
+    "alias2": {"alias", "alias 2", "alias2", "alias celular 2", "nombre celular 2", "parentesco", "alias del celular 2"},
 }
 OBLIGATORIAS = ("nombre", "mz", "villa", "pago")
 NOMBRES_COLUMNA = {"cedula": "Cédula", "nombre": "Nombre", "mz": "Mz", "villa": "Villa",
-                   "pago": "Estado de pago", "celular": "Celular"}
+                   "pago": "Estado de pago", "celular": "Celular", "celular2": "Celular 2", "alias2": "Alias del celular 2"}
 
 AL_DIA = {"si", "s", "1", "ok", "pagado", "pagada", "pago", "al dia", "aldia", "cancelado", "cancelada", "vigente"}
 IMPAGO = {"no", "n", "0", "impago", "impaga", "pendiente", "moroso", "morosa", "mora", "deuda", "debe", "vencido", "atrasado"}
@@ -169,6 +172,21 @@ def _validar(d: dict) -> dict:
         else:
             avisos.append(f"El celular «{crudo[:30]}» no es utilizable: se cargó sin celular")
 
+    # celular 2 (opcional): segundo número de la misma persona, con un alias (esposa, hija…)
+    celular2, alias2 = None, None
+    crudo2 = d.get("celular2", "").strip()
+    if crudo2:
+        normal2 = normalizar_telefono(crudo2)
+        if not 11 <= len(normal2) <= 15:
+            avisos.append(f"El celular 2 «{crudo2[:30]}» no es utilizable: se cargó sin celular 2")
+        elif normal2 == celular:
+            avisos.append("El celular 2 es igual al principal: se ignoró")
+        else:
+            celular2 = normal2
+            alias2 = " ".join(d.get("alias2", "").split())[:100] or None
+    elif d.get("alias2", "").strip():
+        avisos.append("Hay un alias pero no hay celular 2: se ignoró el alias")
+
     pago = None
     p = _norm(d.get("pago", "")).strip()
     if p:
@@ -178,8 +196,8 @@ def _validar(d: dict) -> dict:
             pago = False
         else:
             return {"error": f"Estado de pago no reconocido ({d['pago']}). Use «Al día» o «Impago»"}
-    return {"nombre": nombre, "cedula": cedula or None, "celular": celular, "pago": pago,
-            "casa": f"Mz {mz} Villa {villa}", "avisos": avisos}
+    return {"nombre": nombre, "cedula": cedula or None, "celular": celular, "celular2": celular2, "alias2": alias2,
+            "pago": pago, "casa": f"Mz {mz} Villa {villa}", "avisos": avisos}
 
 
 # ---------- proceso (sirve para revisar y para aplicar) ----------
@@ -193,7 +211,7 @@ def _procesar(datos: List[dict], usuario: str, aplicar: bool) -> dict:
     trans = conn.begin()
     try:
         existentes = [fila(r) for r in conn.execute(select(residentes)).all()]
-        por_tel = {r["telefono"]: r for r in existentes if r["telefono"]}
+        por_tel = {t: r for r in existentes for t in (r["telefono"], r["telefono2"]) if t}   # los dos celulares de cada persona
         por_nombre_casa = {(_nom(r["nombre"]), clave_casa(r["casa"])): r for r in existentes if r["nombre"]}
         pagos = {c.clave: bool(c.al_dia) for c in conn.execute(select(casas)).all()}
         pago_casa: Dict[str, dict] = {}
@@ -230,11 +248,26 @@ def _procesar(datos: List[dict], usuario: str, aplicar: bool) -> dict:
                         avisos.append({"fila": n, "motivo": f"{v['nombre']} ya existe en {v['casa']} con otro celular "
                                                            f"(+{candidato['telefono']}): se agregó como persona aparte"})
 
+            # celular 2: solo se agrega si no es de otra persona y la persona no tiene ya otro distinto (nunca se pisa)
+            c2, a2 = v["celular2"], v["alias2"]
+            if c2:
+                dueno2 = por_tel.get(c2)
+                if dueno2 is not None and (actual is None or dueno2["id"] != actual["id"]):
+                    avisos.append({"fila": n, "motivo": f"El celular 2 +{c2} ya lo tiene {dueno2['nombre'] or 'otra persona'} "
+                                                       f"({dueno2['casa']}): {v['nombre']} se cargó sin celular 2"})
+                    c2 = a2 = None
+                elif actual is not None and actual.get("telefono2") and actual["telefono2"] != c2:
+                    avisos.append({"fila": n, "motivo": f"{v['nombre']} ya tiene otro celular 2 (+{actual['telefono2']}): "
+                                                       "no se cambió (edítalo en la pantalla Residentes)"})
+                    c2 = a2 = None
+
             validas += 1
             if actual is None:
                 nuevo_id = conn.execute(insert(residentes).values(
-                    telefono=v["celular"], cedula=v["cedula"], nombre=v["nombre"], casa=v["casa"])).inserted_primary_key[0]
-                actual = {"id": nuevo_id, "telefono": v["celular"], "cedula": v["cedula"], "nombre": v["nombre"], "casa": v["casa"]}
+                    telefono=v["celular"], cedula=v["cedula"], nombre=v["nombre"], casa=v["casa"],
+                    telefono2=c2, alias2=a2)).inserted_primary_key[0]
+                actual = {"id": nuevo_id, "telefono": v["celular"], "cedula": v["cedula"], "nombre": v["nombre"],
+                          "casa": v["casa"], "telefono2": c2, "alias2": a2}
                 nuevos += 1
             else:
                 if clave_casa(actual["casa"]) != casa_n:
@@ -244,11 +277,17 @@ def _procesar(datos: List[dict], usuario: str, aplicar: bool) -> dict:
                     cambios["cedula"] = v["cedula"]
                 if v["celular"] and not actual["telefono"]:
                     cambios["telefono"] = v["celular"]
+                if c2 and not actual.get("telefono2"):
+                    cambios["telefono2"] = c2
+                    cambios["alias2"] = a2
+                elif c2 and a2 and actual.get("telefono2") == c2 and not actual.get("alias2"):
+                    cambios["alias2"] = a2             # mismo celular 2: se le completa el alias
                 conn.execute(update(residentes).where(residentes.c.id == actual["id"]).values(**cambios))
                 actual.update(cambios)
                 actualizados += 1
-            if actual["telefono"]:
-                por_tel[actual["telefono"]] = actual
+            for t in (actual["telefono"], actual.get("telefono2")):
+                if t:
+                    por_tel[t] = actual
             por_nombre_casa[(_nom(actual["nombre"]), clave_casa(actual["casa"]))] = actual
             tocados[actual["id"]] = actual
 
@@ -327,17 +366,18 @@ def plantilla(_: dict = Depends(solo_admin)):
     wb = Workbook()
     ws = wb.active
     ws.title = "Residentes"
-    ws.append(["Cédula", "Nombre", "Mz", "Villa", "Estado de pago", "Celular"])
-    ws.append(["0912345678", "Juan Pérez (ejemplo)", "6", "23", "Al día", "0988391178"])
-    ws.append(["", "María Gómez (ejemplo)", "6", "24", "Impago", ""])
+    ws.append(["Cédula", "Nombre", "Mz", "Villa", "Estado de pago", "Celular", "Celular 2", "Alias del celular 2"])
+    ws.append(["0912345678", "Juan Pérez (ejemplo)", "6", "23", "Al día", "0988391178", "0991112223", "esposa"])
+    ws.append(["", "María Gómez (ejemplo)", "6", "24", "Impago", "", "", ""])
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="1E293B")
-    for col, ancho in zip("ABCDEF", (16, 30, 8, 8, 16, 16)):
+    for col, ancho in zip("ABCDEFGH", (16, 30, 8, 8, 16, 16, 16, 22)):
         ws.column_dimensions[col].width = ancho
     for fila_ in ws.iter_rows(min_row=2, max_row=500):   # texto, para que Excel no quite el cero inicial
         fila_[0].number_format = "@"
         fila_[5].number_format = "@"
+        fila_[6].number_format = "@"
     ws.freeze_panes = "A2"
     ayuda = wb.create_sheet("Instrucciones")
     for linea in (
@@ -346,6 +386,8 @@ def plantilla(_: dict = Depends(solo_admin)):
         "Estado de pago: «Al día» o «Impago» (también se entiende Sí/No, Pagado, Pendiente, Moroso). Vacío = sin cambio.",
         "Cédula y Celular son opcionales y no se validan. Si un celular no sirve, la persona se carga sin celular y se te avisa.",
         "Celular: el WhatsApp con el que la persona escribirá al sistema. Formato 0988391178 (también sirve 593988391178).",
+        "Celular 2 y Alias (opcionales): un segundo WhatsApp de la MISMA persona (esposa, hija…) y cómo llamarlo. Los dos celulares pueden anunciar visitas y responder autorizaciones de esa casa.",
+        "Un celular no puede estar en dos personas, ni ser a la vez el principal de una y el celular 2 de otra (se te avisa y se omite).",
         "Sin celular la persona queda registrada, pero no podrá usar WhatsApp hasta que se lo agregues (se edita en la pantalla Residentes).",
         "Si una casa tiene varias personas con estados distintos, la casa queda como IMPAGA.",
         "Volver a subir el archivo no duplica: se reconoce a la persona por celular (con el mismo nombre) o por nombre + casa, y se le completan los datos.",

@@ -25,13 +25,13 @@ del residente por WhatsApp, reportes en Excel, login con 2 roles y estado de pag
 | `util.py` | Utilidades (normalizar celulares) |
 | `config.py` | Ajustes desde variables de entorno / `.env` |
 | `db.py` | Base de datos portable (SQLAlchemy Core): tablas, helpers y `init_db()` |
-| `alembic/` | Migraciones del esquema (`0001` base del piloto, `0002` usuarios/pagos, `0003` configuración, `0004` residentes con id/cédula/celular opcional, `0005` cédula sin unicidad y casa de hasta 200 caracteres) |
+| `alembic/` | Migraciones del esquema (`0001` base del piloto, `0002` usuarios/pagos, `0003` configuración, `0004` residentes con id/cédula/celular opcional, `0005` cédula sin unicidad y casa de hasta 200 caracteres, `0006` segundo celular con alias) |
 | `auth.py` | Login, sesiones en BD, roles ADMIN / GUARDIA, gestión de usuarios |
 | `realtime.py` | WebSocket; al guardia se le envían solo los campos mínimos |
 | `reportes.py` | Reportes (solo ADMIN): pantalla, CSV y Excel |
 | `static/` | Pantallas HTML (Tailwind CDN + JS); `static/assets/nav.js` = menú según el rol |
 | `scripts/migrar_a_postgres.py` | Copia los datos de SQLite a PostgreSQL |
-| `tests/` | 105 pruebas automáticas (`pytest`, SQLite) |
+| `tests/` | 122 pruebas automáticas (`pytest`, SQLite) |
 
 ## Cómo correrlo
 ```bash
@@ -81,6 +81,11 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
   dato de la fila; la celda parpadea en verde (guardado) o rojo (error con el motivo). La casa se edita con dos casillas (Mz y Villa).
   API: `PATCH /api/residentes/{id}` (cambios parciales; el celular se valida y no puede repetirse; vaciarlo lo quita).
 - El alta manual también admite celular vacío (se completa luego con un clic).
+- **Celular 2 y alias** (migración 0006): cada persona puede tener un segundo WhatsApp (`telefono2`) y cómo llamarlo (`alias2`: «esposa», «hija»…).
+  Son la MISMA persona y casa: cualquiera de los dos números anuncia visitas y responde autorizaciones, y la mora bloquea a ambos. Un número no
+  puede estar en dos personas ni en las dos columnas (se valida en la app; 409). Importador: columnas opcionales «Celular 2» y «Alias del celular 2»
+  (nunca pisa el celular 2 existente ni uno ajeno; avisa). El alias lo ve solo el ADMIN (el guardia nunca ve celulares ni alias).
+  Búsquedas por teléfono: usar siempre `con_telefono()` / `telefonos_de()` de `db.py` (cubren las dos columnas).
 - Pendiente: unificar `06` con `6` y `12A` con `12-A` (hoy son casas distintas).
 
 ## Vigencia de las visitas
@@ -125,7 +130,8 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Es una ayuda para casos fortuitos (el 90 % lo anuncia el residente): hay que saber a QUIÉN se visita. Búsqueda por Mz y Villa tolerante
   (1 = 01, 12A = 12-A). Una casa → sus residentes; sin casa que coincida NO se puede registrar (400); casa no al día → panel rojo
   «El residente de … no está al día en sus pagos. Debe comunicarse con administración» (nunca la visita), sin nombres, envío bloqueado (409
-  y queda en «Intentos bloqueados»). «Registrar igual» solo si la casa existe pero nadie tiene celular válido. Sin conexión: no deja registrar.
+  y queda en «Intentos bloqueados»). «Registrar igual» solo si la casa existe pero nadie tiene celular válido.
+  La solicitud va a TODOS los celulares de cada persona elegida (principal y celular 2); responde el primero que conteste. Sin conexión: no deja registrar.
 - La visita se guarda con la casa del residente elegido tal como está guardada; `resolver_solicitud` compara la casa sin distinguir mayúsculas.
 
 ## Resumen por WhatsApp para administradores

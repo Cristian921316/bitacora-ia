@@ -17,7 +17,7 @@
 <body class="bg-slate-900 text-slate-100 min-h-screen">
   <script src="/assets/nav.js"></script>
 
-  <main class="max-w-5xl mx-auto p-4 space-y-6">
+  <main class="max-w-6xl mx-auto p-4 space-y-6">
     <div class="flex flex-wrap items-center gap-3">
       <h1 class="text-xl font-bold">👥 Residentes</h1>
       <button id="btnImportar" class="ml-auto px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm">📥 Importar residentes (Excel)</button>
@@ -39,6 +39,12 @@
       <label class="text-xs text-slate-400">Celular <span class="text-slate-500">(opcional)</span>
         <input id="telefono" inputmode="tel" placeholder="0988391178" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
       </label>
+      <label class="text-xs text-slate-400">Celular 2 <span class="text-slate-500">(opcional)</span>
+        <input id="telefono2" inputmode="tel" placeholder="0991112223" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      </label>
+      <label class="text-xs text-slate-400">Alias del celular 2 <span class="text-slate-500">(ej. esposa)</span>
+        <input id="alias2" maxlength="100" placeholder="esposa, hija…" class="block w-full mt-1 rounded bg-slate-900 border border-slate-600 px-3 py-2 text-sm text-slate-100" />
+      </label>
       <button class="col-span-2 md:col-span-1 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 font-semibold text-sm">+ Agregar</button>
       <p id="msg" class="col-span-2 md:col-span-6 text-sm hidden"></p>
     </form>
@@ -51,7 +57,7 @@
           <option value="">Todos</option><option value="impago">Solo impagos</option><option value="aldia">Solo al día</option>
           <option value="sincel">Sin celular</option>
         </select>
-        <input id="buscar" type="search" autocomplete="off" placeholder="Buscar por casa, nombre, cédula o celular…"
+        <input id="buscar" type="search" autocomplete="off" placeholder="Buscar por casa, nombre, cédula, celular o alias…"
           class="flex-1 min-w-[180px] max-w-sm rounded bg-slate-900 border border-slate-600 focus:border-indigo-400 focus:outline-none px-3 py-1.5 text-sm placeholder-slate-500" />
       </div>
       <p class="text-xs text-slate-500 mb-1">✏️ <b>Haz clic en un dato para editarlo</b>: <b>Enter</b> guarda, <b>Esc</b> cancela y <b>Tab</b> pasa al siguiente dato de la fila.</p>
@@ -60,7 +66,7 @@
       <div class="overflow-x-auto rounded-xl border border-slate-700">
         <table class="w-full text-sm">
           <thead class="bg-slate-800 text-left text-xs uppercase text-slate-400">
-            <tr><th class="px-3 py-2">Casa</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2">Cédula</th><th class="px-3 py-2">Celular</th>
+            <tr><th class="px-3 py-2">Casa</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2">Cédula</th><th class="px-3 py-2">Celular</th><th class="px-3 py-2">Celular 2</th><th class="px-3 py-2">Alias</th>
                 <th class="px-3 py-2">Pago</th><th class="px-3 py-2"></th></tr>
           </thead>
           <tbody id="tbody"></tbody>
@@ -79,7 +85,7 @@
         <button id="impCerrar" class="ml-auto text-slate-400 hover:text-slate-100 text-xl leading-none">✕</button>
       </div>
       <div class="text-sm text-slate-300 space-y-1">
-        <p>Sube un Excel (<b>.xlsx</b>) o <b>.csv</b> con las columnas <b>Cédula, Nombre, Mz, Villa, Estado de pago y Celular</b>.
+        <p>Sube un Excel (<b>.xlsx</b>) o <b>.csv</b> con las columnas <b>Cédula, Nombre, Mz, Villa, Estado de pago y Celular</b> (y, si quieres, <b>Celular 2</b> y <b>Alias del celular 2</b>: un segundo WhatsApp de la misma persona, por ejemplo «esposa»).
           Obligatorias: <b>Nombre, Mz, Villa y Estado de pago</b>. La cédula y el celular son opcionales y no se validan:
           lo que no sirva se carga sin ese dato y te aviso, para completarlo después.
           <a href="/api/residentes/plantilla.xlsx" class="text-indigo-300 underline">Descargar plantilla</a></p>
@@ -119,7 +125,7 @@ const VACIO = '<span class="text-slate-500">— agregar —</span>';
 function render() {
   const q = norm($('buscar').value).trim(), f = $('filtro').value;
   const lista = residentes
-    .filter(r => !q || q.split(/\s+/).every(t => norm(`${r.casa} ${r.nombre} ${r.cedula} ${r.telefono}`).includes(t)))
+    .filter(r => !q || q.split(/\s+/).every(t => norm(`${r.casa} ${r.nombre} ${r.cedula} ${r.telefono} ${r.telefono2} ${r.alias2}`).includes(t)))
     .filter(r => !f || (f === 'impago' ? !r.al_dia : f === 'aldia' ? r.al_dia : !r.telefono))
     .sort((a, b) => a.casa.localeCompare(b.casa, 'es', { numeric: true }));
   $('cnt').textContent = residentes.length;
@@ -138,11 +144,13 @@ function render() {
       <td class="celda px-3 py-2" data-id="${r.id}" data-campo="nombre" title="Clic para editar">${esc(r.nombre) || VACIO}</td>
       <td class="celda px-3 py-2 whitespace-nowrap text-slate-300" data-id="${r.id}" data-campo="cedula" title="Clic para editar">${esc(r.cedula) || VACIO}</td>
       <td class="celda px-3 py-2 whitespace-nowrap" data-id="${r.id}" data-campo="telefono" title="Clic para editar">${r.telefono ? '+' + esc(r.telefono) : '<span class="text-amber-400 text-xs">sin celular · agregar</span>'}</td>
+      <td class="celda px-3 py-2 whitespace-nowrap" data-id="${r.id}" data-campo="telefono2" title="Segundo celular de la misma persona (clic para editar)">${r.telefono2 ? '+' + esc(r.telefono2) : VACIO}</td>
+      <td class="celda px-3 py-2 text-slate-300" data-id="${r.id}" data-campo="alias2" title="Cómo se llama ese número (esposa, hija…). Solo lo ves tú">${r.telefono2 ? (esc(r.alias2) || VACIO) : '<span class="text-slate-600">—</span>'}</td>
       <td class="px-3 py-2"><button data-casa="${esc(r.casa)}" data-aldia="${r.al_dia ? 1 : 0}" title="${quien}"
         class="pago text-xs px-3 py-1 rounded-full font-semibold whitespace-nowrap ${r.al_dia ? 'bg-green-700 hover:bg-green-600' : 'bg-red-700 hover:bg-red-600'}">${r.al_dia ? '✅ Al día' : '⛔ Impago'}</button></td>
       <td class="px-3 py-2 text-right"><button data-id="${r.id}" class="borrar text-xs px-2 py-1 rounded bg-slate-700 hover:bg-red-600">Eliminar</button></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6" class="px-3 py-6 text-slate-500">Sin residentes</td></tr>';
+  }).join('') || '<tr><td colspan="8" class="px-3 py-6 text-slate-500">Sin residentes</td></tr>';
 }
 
 async function cargar() {
@@ -151,10 +159,15 @@ async function cargar() {
 }
 
 // ---------- edición en línea: clic en el dato, Enter guarda, Esc cancela, Tab pasa al siguiente ----------
-const CAMPOS = { nombre: { max: 200, ph: 'Nombre' }, cedula: { max: 20, ph: 'Cédula' }, telefono: { max: 20, ph: '0988391178' } };
-const ORDEN = ['casa', 'nombre', 'cedula', 'telefono'];
+const CAMPOS = { nombre: { max: 200, ph: 'Nombre' }, cedula: { max: 20, ph: 'Cédula' }, telefono: { max: 20, ph: '0988391178' },
+  telefono2: { max: 20, ph: '0991112223' }, alias2: { max: 100, ph: 'esposa, hija…' } };
+const ORDEN = ['casa', 'nombre', 'cedula', 'telefono', 'telefono2', 'alias2'];
 const celdaDe = (id, campo) => document.querySelector(`.celda[data-id="${id}"][data-campo="${campo}"]`);
-function abrir(id, campo) { const td = celdaDe(id, campo); if (td) editar(td); }
+function abrir(id, campo) {
+  const r = residentes.find(x => String(x.id) === String(id));
+  if (campo === 'alias2' && r && !r.telefono2) return;     // el alias solo existe si hay celular 2
+  const td = celdaDe(id, campo); if (td) editar(td);
+}
 function destacar(id, campo, tipo) {
   const td = celdaDe(id, campo); if (!td) return;
   td.classList.add('flash-' + tipo); setTimeout(() => td.classList.remove('flash-' + tipo), 1700);
@@ -238,11 +251,12 @@ $('form').onsubmit = async e => {
   const res = await fetch('/api/residentes', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ telefono: $('telefono').value.trim() || null, casa, nombre: $('nombre').value.trim() || null,
-                           cedula: $('cedula').value.trim() || null }),
+                           cedula: $('cedula').value.trim() || null,
+                           telefono2: $('telefono2').value.trim() || null, alias2: $('alias2').value.trim() || null }),
   });
   const data = await res.json();
   if (!res.ok) return aviso(typeof data.detail === 'string' ? data.detail : 'Error al guardar', false);
-  aviso(`Guardado: ${data.casa}${data.telefono ? ' · +' + data.telefono : ' (sin celular: se puede completar haciendo clic en la tabla)'}`, true);
+  aviso(`Guardado: ${data.casa}${data.telefono ? ' · +' + data.telefono : ' (sin celular: se puede completar haciendo clic en la tabla)'}${data.telefono2 ? ' · celular 2 +' + data.telefono2 + (data.alias2 ? ' (' + data.alias2 + ')' : '') : ''}`, true);
   $('form').reset(); $('mz').focus();
   cargar();
 };

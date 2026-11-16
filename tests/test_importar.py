@@ -261,7 +261,9 @@ def test_plantilla_descargable_y_se_puede_volver_a_subir(admin):
     r = admin.get("/api/residentes/plantilla.xlsx")
     assert r.status_code == 200 and "spreadsheetml" in r.headers["content-type"]
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
-    assert [c.value for c in wb["Residentes"][1]] == ENC and "Instrucciones" in wb.sheetnames
+    encabezado = [c.value for c in wb["Residentes"][1]]
+    assert encabezado[:6] == ENC and encabezado[6:] == ["Celular 2", "Alias del celular 2"]
+    assert "Instrucciones" in wb.sheetnames
     again = subir(admin, r.content)                          # la plantilla tal cual es un archivo válido
     assert again.status_code == 200 and again.json()["resumen"]["filas_validas"] == 2
 
