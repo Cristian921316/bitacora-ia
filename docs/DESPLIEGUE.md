@@ -118,7 +118,7 @@ Caddy obtiene el certificado solo. Si no responde: `docker compose logs caddy` (
 ## 6. Primer ingreso y puesta en marcha
 1. Entra a `https://bitacora.midominio.com` con `ADMIN_USUARIO` / `ADMIN_PASSWORD`. Te obliga a cambiar la clave.
 2. **Usuarios**: crea las cuentas de los guardias (rol *Guardia*).
-3. **Residentes → Importar residentes**: sube el Excel (primero «Revisar archivo», luego confirma).
+3. **Residentes**: da de alta a los residentes uno por uno (el importador por Excel se quitó; hay «Exportar a Excel»).
 4. **Configuración**: revisa la vigencia (12 h) y el control de salidas (apagado).
 5. Borra `ADMIN_PASSWORD` del `.env` y ejecuta `docker compose up -d` (ya no hace falta).
 6. Prueba de punta a punta: un audio desde el celular de un residente, y míralo aparecer en la garita.

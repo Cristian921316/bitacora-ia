@@ -303,9 +303,10 @@ function saPintar(d) {
   } else if (d.residentes.length) {
     p.className = 'col-span-2 rounded-lg border border-green-600 bg-green-950/40 px-3 py-2 text-sm';
     p.innerHTML = `<div class="font-semibold text-green-300">🏠 ${esc(d.casa)} · ¿A quién va a visitar?</div>
-      <div class="mt-1 space-y-1">${d.residentes.map(r => `<label class="flex items-center gap-2 ${r.avisable ? '' : 'opacity-60'}">
+      <div class="mt-1 space-y-1">${d.residentes.map(r => `<div class="flex items-center gap-2 ${r.avisable ? '' : 'opacity-60'}"><label class="flex items-center gap-2 flex-1">
         <input type="checkbox" class="sa-res" value="${r.id}" ${r.avisable ? 'checked' : 'disabled'}> <span class="font-medium">${esc(r.nombre)}</span>
-        ${r.avisable ? '' : '<span class="text-xs text-amber-300">(sin celular: no se le puede avisar)</span>'}</label>`).join('')}</div>
+        ${r.avisable ? '' : '<span class="text-xs text-amber-300">(sin celular: no se le puede avisar)</span>'}</label>
+        ${r.avisable ? `<a href="/api/residentes/${r.id}/llamar" target="_blank" rel="noopener" class="text-xs px-2 py-1 rounded bg-green-700 hover:bg-green-600 font-semibold whitespace-nowrap">📞 Llamar</a>` : ''}</div>`).join('')}</div>
       <div class="text-xs text-slate-400 mt-1">Confirma con el visitante que va a ver a esta persona.</div>` +
       (avisables.length ? '' : saCasillaIgual('Registrar igual: nadie de esta casa puede recibir el aviso por WhatsApp'));
   } else if (d.sugerencias.length) {

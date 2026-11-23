@@ -27,7 +27,7 @@ import whatsapp
 from auth import pagina, solo_admin, usuario_actual, usuario_ws
 from db import (accesos, ahora_iso, asegurar_casa, casa_al_dia, casas, clave_casa, con_telefono, engine, fila, init_db, telefonos_de,
                 movimientos, registrar_bloqueo, residentes)
-from importar import router as importar_router
+from exportar import router as exportar_router
 from realtime import manager, vista_para
 from reportes import _norm
 from resumen import AYUDA_ADMIN, armar_resumen, detectar_periodo
@@ -40,7 +40,7 @@ EXTRACTION_MODEL = config.EXTRACTION_MODEL
 app = FastAPI(title="Bitácora Residencial por Voz")
 app.include_router(auth.router)
 app.include_router(reportes_router)
-app.include_router(importar_router)
+app.include_router(exportar_router)
 
 
 # ---------- Modelos ----------
@@ -603,6 +603,23 @@ def _casas_que_coinciden(conn, mz: str, villa: str) -> list:
     return sorted(casas.values(), key=lambda g: (g["mz"], g["villa"]))
 
 
+@app.get("/api/residentes/{rid}/llamar")
+def llamar_residente(rid: int, _: dict = Depends(usuario_actual)):
+    """Botón «Llamar» de la garita: abre el chat de WhatsApp del residente (wa.me) para que el guardia lo llame desde ahí.
+    El celular NO viaja en la página ni en el JSON de la garita: solo en esta redirección, que exige sesión.
+    Va al celular principal; si la persona solo tiene el segundo, a ese. Casa con mora: no se llama (igual que el aviso)."""
+    with engine.connect() as conn:
+        r = conn.execute(select(residentes).where(residentes.c.id == rid)).first()
+        if r is None:
+            raise HTTPException(404, "Residente no encontrado")
+        if config.BLOQUEO_POR_MORA and not casa_al_dia(conn, r.casa):
+            raise HTTPException(403, msg_mora_sin_aviso(r.casa))
+    tels = telefonos_de(r)
+    if not tels:
+        raise HTTPException(404, "Este residente no tiene celular")
+    return RedirectResponse(f"https://wa.me/{solo_digitos(tels[0])}", status_code=302)
+
+
 @app.get("/api/casa/residentes")
 def residentes_de_casa(mz: str, villa: str, exacta: bool = False, u: dict = Depends(usuario_actual)):
     """Para la visita sin aviso: quién vive en esa casa, para que el guardia confirme con el visitante a quién va a ver.
@@ -889,12 +906,6 @@ def reporte(request: Request):
 @app.get("/residentes")
 def residentes_admin(request: Request):
     return pagina(request, ("ADMIN",)) or FileResponse(STATIC_DIR / "residentes.html")
-
-
-@app.get("/residente")
-def residente(request: Request):
-    """Pantalla de demostración para el residente (solo administrador: los residentes usan WhatsApp)."""
-    return pagina(request, ("ADMIN",)) or FileResponse(STATIC_DIR / "residente.html")
 
 
 # Solo los archivos compartidos de la interfaz (menú, etc.); las pantallas se sirven con control de acceso.

@@ -1,23 +1,11 @@
 """Segundo celular por residente (esposa, hija…) con alias: los dos celulares son la MISMA persona de la MISMA casa."""
-import openpyxl
-import io
-
 from conftest import registrar, texto
-from test_importar import lista, subir
 
 CASA = "Mz 6 Villa 23"
-ENC2 = ["Cédula", "Nombre", "Mz", "Villa", "Estado de pago", "Celular", "Celular 2", "Alias del celular 2"]
 
 
-def xlsx2(filas, encabezado=ENC2):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(encabezado)
-    for f in filas:
-        ws.append(f)
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+def lista(admin):
+    return admin.get("/api/residentes").json()
 
 
 def alta(admin, **extra):
@@ -131,41 +119,33 @@ def test_aviso_de_ingreso_llega_a_los_dos_celulares(admin, guardia, wsp):
     assert sorted(n for n, t in wsp if "visita" in t.lower()) == ["593988391178", "593991112223"]
 
 
-# ---------- importador ----------
-def test_importar_celular2_y_alias_y_volver_a_subir_no_duplica(admin):
-    archivo = xlsx2([["", "Juan Pérez", "6", "23", "Al día", "0988391178", "0991112223", "esposa"]])
-    r = subir(admin, archivo, aplicar=True)
-    assert r.status_code == 200 and r.json()["resumen"]["residentes_nuevos"] == 1
-    x = lista(admin)
-    assert len(x) == 1 and x[0]["telefono2"] == "593991112223" and x[0]["alias2"] == "esposa"
-    again = subir(admin, archivo, aplicar=True).json()
-    assert again["resumen"]["residentes_nuevos"] == 0 and len(lista(admin)) == 1
-
-
-def test_importar_sin_las_columnas_nuevas_sigue_funcionando(admin):
-    enc = ["Cédula", "Nombre", "Mz", "Villa", "Estado de pago", "Celular"]
-    r = subir(admin, xlsx2([["", "Ana", "1", "1", "Al día", "0966666666"]], encabezado=enc), aplicar=True)
-    assert r.status_code == 200 and lista(admin)[0]["telefono2"] is None
-
-
-def test_importar_celular2_ajeno_se_omite_y_se_avisa(admin):
-    registrar(admin, "0977777777", "Mz 9 Villa 9", "Otra Persona")
-    r = subir(admin, xlsx2([["", "Juan Pérez", "6", "23", "Al día", "0988391178", "0977777777", "esposa"]]), aplicar=True).json()
-    assert any("celular 2" in a["motivo"] and "ya lo tiene" in a["motivo"] for a in r["avisos"])
-    juan = next(x for x in lista(admin) if x["nombre"] == "Juan Pérez")
-    assert juan["telefono2"] is None and juan["alias2"] is None
-
-
-def test_importar_celular_principal_que_es_el_celular2_de_otro_no_se_pisa(admin):
+# ---------- botón Llamar (garita) y exportación ----------
+def test_llamar_redirige_a_wame_y_el_celular_no_viaja_en_la_lista(admin, guardia):
     alta(admin, telefono2="0991112223")
-    r = subir(admin, xlsx2([["", "Nueva Persona", "7", "7", "Al día", "0991112223", "", ""]]), aplicar=True).json()
-    assert any("ya lo tiene" in a["motivo"] for a in r["avisos"])
-    assert next(x for x in lista(admin) if x["nombre"] == "Nueva Persona")["telefono"] is None
+    d = guardia.get("/api/casa/residentes", params={"mz": "6", "villa": "23"}).json()
+    r0 = d["residentes"][0]
+    assert r0["avisable"] is True and "5939" not in str(d)
+    r = guardia.get(f"/api/residentes/{r0['id']}/llamar", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "https://wa.me/593988391178"
 
 
-def test_importar_no_cambia_un_celular2_ya_existente(admin):
+def test_llamar_sin_celular_mora_y_sin_sesion(admin, guardia, anonimo):
+    admin.post("/api/residentes", json={"casa": "Mz 1 Villa 1", "nombre": "Sin Cel"})
+    sin = next(x for x in lista(admin) if x["nombre"] == "Sin Cel")["id"]
+    assert guardia.get(f"/api/residentes/{sin}/llamar", follow_redirects=False).status_code == 404
+    alta(admin)
+    juan = next(x for x in lista(admin) if x["nombre"] == "Juan Pérez")["id"]
+    assert anonimo.get(f"/api/residentes/{juan}/llamar", follow_redirects=False).status_code == 401
+    admin.post("/api/casas/pago", json={"casa": CASA, "al_dia": False})
+    assert guardia.get(f"/api/residentes/{juan}/llamar", follow_redirects=False).status_code == 403
+
+
+def test_exportar_residentes_excel_solo_admin(admin, guardia):
+    import io, openpyxl
     alta(admin, telefono2="0991112223", alias2="esposa")
-    r = subir(admin, xlsx2([["", "Juan Pérez", "6", "23", "Al día", "0988391178", "0984445556", "hija"]]), aplicar=True).json()
-    assert any("ya tiene otro celular 2" in a["motivo"] for a in r["avisos"])
-    x = lista(admin)[0]
-    assert x["telefono2"] == "593991112223" and x["alias2"] == "esposa"
+    r = admin.get("/api/residentes/exportar.xlsx")
+    assert r.status_code == 200
+    filas = list(openpyxl.load_workbook(io.BytesIO(r.content)).active.values)
+    assert filas[0][:4] == ("Cédula", "Nombre", "Casa", "Estado de pago")
+    assert filas[1][1:] == ("Juan Pérez", CASA, "Al día", "593988391178", "593991112223", "esposa")
+    assert guardia.get("/api/residentes/exportar.xlsx").status_code == 403

@@ -25,7 +25,6 @@
     ['/residentes', '👥 Residentes'],
     ['/usuarios', '🔑 Usuarios'],
     ['/configuracion', '⚙️ Configuración'],
-    ['/residente', '🎙️ Pantalla residente'],
   ];
   const aqui = location.pathname.replace(/\/$/, '');
   const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

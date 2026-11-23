@@ -6,7 +6,6 @@ Construye una aplicación monolítica ultraligera en Python con FastAPI que incl
 3. **Gestión de Estados (`POST /api/cambiar-estado/{id}`)**: Permite cambiar el estado de una visita (de PRE_AUTORIZADO a ADENTRO o SALIO) y notifica por WebSocket.
 4. **WebSocket (`/ws/bitacora`)**: Canal en tiempo real para empujar actualizaciones a los clientes conectados.
 5. **Frontend Integrado (HTML + Tailwind CSS + Vanilla JS)**:
-   - `/residente`: Pantalla móvil amigable con un botón de grabación de micrófono (*Push-to-Talk*) para mandar notas de voz y ver qué pre-autorizó.
    - `/garita`: Monitor de control de acceso en dos columnas ("Pre-autorizados por llegar" y "Adentro del Conjunto"), con un botón de un clic para dar ingreso/salida y reproducción de un beep por Web Audio API al recibir eventos en tiempo real.
 ---
 
@@ -21,7 +20,7 @@ del residente por WhatsApp, reportes en Excel, login con 2 roles y estado de pag
 | `main.py` | Rutas: visitas, residentes, estado de pago, WhatsApp (webhook), pantallas |
 | `whatsapp.py` | Conexión directa con Whapi.Cloud: enviar texto, bajar audios y traducir su webhook |
 | `parametros.py` | Parámetros que el admin cambia en `/configuracion` (vigencia, control de salidas, tiempo de rechazo) y cálculo de «Vencida» |
-| `importar.py` | Importar residentes desde Excel/CSV (revisar y confirmar) y plantilla descargable |
+| `exportar.py` | Exportar la tabla de residentes a Excel |
 | `util.py` | Utilidades (normalizar celulares) |
 | `config.py` | Ajustes desde variables de entorno / `.env` |
 | `db.py` | Base de datos portable (SQLAlchemy Core): tablas, helpers y `init_db()` |
@@ -31,7 +30,7 @@ del residente por WhatsApp, reportes en Excel, login con 2 roles y estado de pag
 | `reportes.py` | Reportes (solo ADMIN): pantalla, CSV y Excel |
 | `static/` | Pantallas HTML (Tailwind CDN + JS); `static/assets/nav.js` = menú según el rol |
 | `scripts/migrar_a_postgres.py` | Copia los datos de SQLite a PostgreSQL |
-| `tests/` | 122 pruebas automáticas (`pytest`, SQLite) |
+| `tests/` | 96 pruebas automáticas (`pytest`, SQLite) |
 
 ## Cómo correrlo
 ```bash
@@ -47,7 +46,7 @@ después se pueden borrar del `.env`.
 Pruebas: `pip install -r requirements-dev.txt && pytest`.
 
 ## Roles
-- **ADMIN**: menú completo (Garita, Reporte, Residentes, Usuarios, Configuración, Pantalla residente). Puede hacer excepciones de ingreso.
+- **ADMIN**: menú completo (Garita, Reporte, Residentes, Usuarios, Configuración). Puede hacer excepciones de ingreso.
 - **GUARDIA**: solo `/garita`, sin menú. No ve teléfonos, textos de audios, reportes ni estado de pagos.
 - Sesión por cookie `HttpOnly` guardada en BD (hash del token); 5 intentos fallidos bloquean 5 min; claves PBKDF2-SHA256.
 - Con HTTPS poner `COOKIE_SECURE=1`.
@@ -65,18 +64,10 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Sin control de salidas, el reporte muestra el estado como «INGRESÓ» (no se sabe si ya se fue). Encendiéndolo vuelven la columna
   «Adentro del Conjunto», el botón de salida y la alerta roja de quienes siguen adentro desde ayer.
 
-## Importar y editar residentes
-- Residentes → **Importar residentes (Excel)**. Columnas: Cédula, Nombre, Mz, Villa, Estado de pago y Celular.
-  **Obligatorias: Nombre, Mz, Villa y Estado de pago** (una fila puede traer el estado vacío = «sin cambio»; una casa nueva queda al día).
-  **Cédula y Celular son opcionales y no se validan**: la cédula puede repetirse; un celular inservible (texto, muy corto o largo)
-  o repetido por otra persona se carga **sin celular** y deja un aviso. Mz y Villa admiten hasta 50 caracteres. Plantilla descargable.
-- Solo es error de fila: falta el nombre, la manzana o la villa, o un estado de pago ilegible (leerlo mal podría bloquear a una casa
-  que sí pagó). Dos pasos: **revisar** (no guarda nada) y **confirmar**. Las filas con error se omiten y se explican.
-- Cómo reconoce a una persona al volver a subir: por **celular con el mismo nombre**; si no hay celular, por **nombre + casa**
-  (si ya estaba sin celular y ahora lo trae, se le completa). La cédula NO identifica a nadie. Nunca se pisa a otra persona:
-  si el celular ya lo tiene alguien con otro nombre (pareja que comparte teléfono), la nueva persona se carga sin celular.
-- Solo agrega o actualiza: las casas que no aparecen en el archivo no se tocan. Estado de pago por casa: si hay estados distintos
-  en una casa, queda IMPAGA. Excel quita ceros iniciales: las cédulas de 9 dígitos se completan y los celulares 9XXXXXXXX pasan a 593 9XXXXXXXX.
+## Exportar y editar residentes
+- Residentes → **Exportar a Excel** (`GET /api/residentes/exportar.xlsx`, solo ADMIN): toda la tabla (cédula, nombre, casa, estado de pago, celular, celular 2, alias).
+  El **importador masivo se quitó** (por ahora no se carga lista por archivo; si se necesita, está en el historial de git: `importar.py`).
+- La **pantalla web de residente** (`/residente`) se eliminó: los residentes usan solo WhatsApp.
 - **Edición en línea** en Residentes: clic en nombre, cédula, celular o casa; **Enter** guarda, **Esc** cancela, **Tab** pasa al siguiente
   dato de la fila; la celda parpadea en verde (guardado) o rojo (error con el motivo). La casa se edita con dos casillas (Mz y Villa).
   API: `PATCH /api/residentes/{id}` (cambios parciales; el celular se valida y no puede repetirse; vaciarlo lo quita).
@@ -122,7 +113,6 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Extracción con `gpt-4o-mini` (structured outputs, configurable con `EXTRACTION_MODEL`); transcripción con `whisper-1`.
 - Estados de una visita: PENDIENTE (sin aviso, espera al residente), PRE_AUTORIZADO, ADENTRO, SALIO, RECHAZADO.
 - La garita carga solo lo abierto (pendientes, por llegar, adentro y rechazos de los últimos 30 min); el historial vive en el reporte.
-- `/residente` (voz/texto por web) quedó como pantalla de demostración solo para ADMIN: los residentes usan WhatsApp.
 - El micrófono del navegador solo funciona en `localhost` o HTTPS.
 - El `.env` y la base nunca se suben al repo.
 
@@ -183,3 +173,5 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Variables nuevas: `WHAPI_TOKEN`, `WEBHOOK_TOKEN` (en la URL del webhook), opcional `WHAPI_URL`. Quedaron obsoletas `EVOLUTION_*` (se pueden borrar del `.env`).
 - Por verificar en la primera prueba real: descarga de audios por `/media/{id}` (si no hay Auto Download), y que `from` traiga el teléfono
   cuando WhatsApp use identificadores `@lid`.
+
+- **Botón «Llamar»** (visita sin aviso): junto a cada residente, abre `wa.me/<celular>` vía `GET /api/residentes/{id}/llamar` (redirección con sesión; el celular no viaja en el JSON de la garita; va al principal, o al celular 2 si es el único; casa con mora = 403).

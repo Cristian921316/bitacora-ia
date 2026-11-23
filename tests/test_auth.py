@@ -11,7 +11,7 @@ from sqlalchemy import select
 def test_sin_sesion_api_401_y_paginas_redirigen(anonimo):
     assert anonimo.get("/api/accesos").status_code == 401
     assert anonimo.get("/api/reporte").status_code == 401
-    for pagina in ("/garita", "/reporte", "/residentes", "/usuarios", "/residente"):
+    for pagina in ("/garita", "/reporte", "/residentes", "/usuarios"):
         r = anonimo.get(pagina)
         assert r.status_code == 303 and r.headers["location"].startswith("/login"), pagina
     assert anonimo.get("/login").status_code == 200
@@ -32,7 +32,7 @@ def test_login_incorrecto_mensaje_generico_y_bloqueo_por_intentos(anonimo, admin
 def test_guardia_solo_ve_la_garita(guardia):
     assert guardia.get("/garita").status_code == 200
     guardia.follow_redirects = False
-    for pagina in ("/reporte", "/residentes", "/usuarios", "/residente"):
+    for pagina in ("/reporte", "/residentes", "/usuarios"):
         r = guardia.get(pagina)
         assert r.status_code == 303 and r.headers["location"] == "/garita", pagina
     for metodo, url in (("get", "/api/reporte"), ("get", "/api/reporte.xlsx"), ("get", "/api/residentes"),
@@ -45,7 +45,7 @@ def test_guardia_solo_ve_la_garita(guardia):
 
 
 def test_admin_accede_a_todo(admin):
-    for pagina in ("/garita", "/reporte", "/residentes", "/usuarios", "/residente"):
+    for pagina in ("/garita", "/reporte", "/residentes", "/usuarios"):
         assert admin.get(pagina).status_code == 200, pagina
     assert admin.get("/api/reporte").status_code == 200
     assert admin.get("/api/accesos?todos=1").status_code == 200
