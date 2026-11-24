@@ -80,6 +80,8 @@ def openai_falso(monkeypatch):
                 if "viene" in txt.lower():
                     vis = [main.Visita(casa="X", nombre_visitante="Pedro Gómez" if "Pedro" in txt else "Juan Pérez",
                                        tipo=main.TipoVisita.VISITA, placa="ABC123" if "ABC" in txt else None)]
+                if "Karla" in txt:      # una lista de varias personas
+                    vis = [main.Visita(casa="X", nombre_visitante=n, tipo=main.TipoVisita.VISITA) for n in ("Karla", "William", "Carlos")]
                 return types.SimpleNamespace(choices=[types.SimpleNamespace(
                     message=types.SimpleNamespace(parsed=main.ExtraccionVisitas(visitas=vis)))])
 

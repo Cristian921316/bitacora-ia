@@ -56,7 +56,7 @@ const VISTAS = {
   visitas: {
     estados: [['', 'Todos'], ['PRE_AUTORIZADO', 'Pre-autorizado'], ['ADENTRO', 'Ingresó / adentro'], ['SALIO', 'Salió'],
               ['PENDIENTE', 'Esperando autorización'], ['RECHAZADO', 'Rechazado por residente'],
-              ['VENCIDA', 'Vencida (no llegó a tiempo)']],
+              ['VENCIDA', 'Vencida (no llegó a tiempo)'], ['LLAMADA', 'Llamada sin registro']],
     cols: [
       ['Registro', r => fecha(r.fecha_hora)], ['Casa', r => r.casa], ['Visitante', r => r.nombre_visitante],
       ['Tipo', r => r.tipo], ['Placa', r => r.placa], ['Estado', r => r.estado],
@@ -68,7 +68,7 @@ const VISTAS = {
   },
   movimientos: {
     estados: [['', 'Todos'], ['REGISTRADO', 'Registrado'], ['SOLICITUD', 'Solicitud sin aviso'], ['AUTORIZADO', 'Autorizado por residente'],
-              ['RECHAZADO', 'Rechazado por residente'], ['INGRESO', 'Ingreso'], ['SALIDA', 'Salida']],
+              ['RECHAZADO', 'Rechazado por residente'], ['INGRESO', 'Ingreso'], ['SALIDA', 'Salida'], ['LLAMADA', 'Llamada sin registro']],
     cols: [
       ['Fecha y hora', r => fecha(r.fecha_hora)], ['Evento', r => r.evento], ['Casa', r => r.casa],
       ['Visitante', r => r.nombre_visitante], ['Tipo', r => r.tipo], ['Placa', r => r.placa],
@@ -84,9 +84,9 @@ const VISTAS = {
   },
 };
 const COLOR = { PRE_AUTORIZADO: 'text-amber-300', ADENTRO: 'text-green-300', SALIO: 'text-slate-400',
-                PENDIENTE: 'text-purple-300', RECHAZADO: 'text-red-400', VENCIDA: 'text-slate-500', 'INGRESÓ': 'text-green-300',
+                PENDIENTE: 'text-purple-300', LLAMADA: 'text-sky-300', RECHAZADO: 'text-red-400', VENCIDA: 'text-slate-500', 'INGRESÓ': 'text-green-300',
                 REGISTRADO: 'text-amber-300', INGRESO: 'text-green-300', SALIDA: 'text-red-300',
-                SOLICITUD: 'text-purple-300', AUTORIZADO: 'text-green-300' };
+                SOLICITUD: 'text-purple-300', LLAMADA: 'text-sky-300', AUTORIZADO: 'text-green-300' };
 
 const $ = id => document.getElementById(id);
 function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

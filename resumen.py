@@ -48,7 +48,7 @@ def armar_resumen(conn, periodo: str, ahora: Optional[datetime] = None) -> str:
     en_rango = (accesos.c.fecha_hora >= d, accesos.c.fecha_hora < h) if periodo == "ayer" else (accesos.c.fecha_hora >= d, accesos.c.fecha_hora <= h)
 
     def contar(*cond):
-        return conn.execute(select(func.count()).select_from(accesos).where(*en_rango, *cond)).scalar() or 0
+        return conn.execute(select(func.count()).select_from(accesos).where(*en_rango, accesos.c.estado != "LLAMADA", *cond)).scalar() or 0   # las llamadas son auditoría, no visitas
 
     total = contar()
     if periodo == "hoy":
@@ -71,7 +71,7 @@ def armar_resumen(conn, periodo: str, ahora: Optional[datetime] = None) -> str:
     bloqueos = conn.execute(select(func.count()).select_from(intentos_bloqueados).where(
         intentos_bloqueados.c.fecha_hora >= d,
         (intentos_bloqueados.c.fecha_hora < h) if periodo == "ayer" else (intentos_bloqueados.c.fecha_hora <= h))).scalar() or 0
-    por_tipo = conn.execute(select(accesos.c.tipo, func.count()).where(*en_rango).group_by(accesos.c.tipo)
+    por_tipo = conn.execute(select(accesos.c.tipo, func.count()).where(*en_rango, accesos.c.estado != "LLAMADA").group_by(accesos.c.tipo)
                             .order_by(func.count().desc())).all()
     tipos = ", ".join(f"{TIPOS.get(t, t.lower())} {n}" for t, n in por_tipo)
 

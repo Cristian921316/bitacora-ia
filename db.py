@@ -36,7 +36,7 @@ accesos = Table(
     Column("hora_salida", Text),
     Column("hora_respuesta", Text),
     Column("respondido_por", Text),
-    CheckConstraint("estado IN ('PRE_AUTORIZADO','ADENTRO','SALIO','PENDIENTE','RECHAZADO')", name="ck_accesos_estado"),
+    CheckConstraint("estado IN ('PRE_AUTORIZADO','ADENTRO','SALIO','PENDIENTE','RECHAZADO','LLAMADA')", name="ck_accesos_estado"),
     Index("idx_accesos_fecha", "fecha_hora"),
     sqlite_autoincrement=True,
 )
@@ -50,7 +50,7 @@ movimientos = Table(
     Column("fecha_hora", Text, nullable=False),
     Column("origen", Text),
     Column("usuario", Text),  # quién lo hizo (usuario del sistema), si aplica
-    CheckConstraint("evento IN ('REGISTRADO','INGRESO','SALIDA','SOLICITUD','AUTORIZADO','RECHAZADO')", name="ck_movimientos_evento"),
+    CheckConstraint("evento IN ('REGISTRADO','INGRESO','SALIDA','SOLICITUD','AUTORIZADO','RECHAZADO','LLAMADA')", name="ck_movimientos_evento"),
     Index("idx_mov_fecha", "fecha_hora"),
     sqlite_autoincrement=True,
 )

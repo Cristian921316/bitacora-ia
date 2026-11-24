@@ -24,13 +24,13 @@ del residente por WhatsApp, reportes en Excel, login con 2 roles y estado de pag
 | `util.py` | Utilidades (normalizar celulares) |
 | `config.py` | Ajustes desde variables de entorno / `.env` |
 | `db.py` | Base de datos portable (SQLAlchemy Core): tablas, helpers y `init_db()` |
-| `alembic/` | Migraciones del esquema (`0001` base del piloto, `0002` usuarios/pagos, `0003` configuración, `0004` residentes con id/cédula/celular opcional, `0005` cédula sin unicidad y casa de hasta 200 caracteres, `0006` segundo celular con alias) |
+| `alembic/` | Migraciones del esquema (`0001` base del piloto, `0002` usuarios/pagos, `0003` configuración, `0004` residentes con id/cédula/celular opcional, `0005` cédula sin unicidad y casa de hasta 200 caracteres, `0006` segundo celular con alias, `0007` estado/evento LLAMADA) |
 | `auth.py` | Login, sesiones en BD, roles ADMIN / GUARDIA, gestión de usuarios |
 | `realtime.py` | WebSocket; al guardia se le envían solo los campos mínimos |
 | `reportes.py` | Reportes (solo ADMIN): pantalla, CSV y Excel |
 | `static/` | Pantallas HTML (Tailwind CDN + JS); `static/assets/nav.js` = menú según el rol |
 | `scripts/migrar_a_postgres.py` | Copia los datos de SQLite a PostgreSQL |
-| `tests/` | 96 pruebas automáticas (`pytest`, SQLite) |
+| `tests/` | 101 pruebas automáticas (`pytest`, SQLite) |
 
 ## Cómo correrlo
 ```bash
@@ -174,4 +174,5 @@ Pruebas: `pip install -r requirements-dev.txt && pytest`.
 - Por verificar en la primera prueba real: descarga de audios por `/media/{id}` (si no hay Auto Download), y que `from` traiga el teléfono
   cuando WhatsApp use identificadores `@lid`.
 
-- **Botón «Llamar»** (visita sin aviso): junto a cada residente, abre `wa.me/<celular>` vía `GET /api/residentes/{id}/llamar` (redirección con sesión; el celular no viaja en el JSON de la garita; va al principal, o al celular 2 si es el único; casa con mora = 403).
+- **Botón «Llamar»** (visita sin aviso): junto a cada residente, abre `wa.me/<celular>` vía `GET /api/residentes/{id}/llamar` (redirección con sesión; el celular no viaja en el JSON de la garita; va al principal, o al celular 2 si es el único; casa con mora = 403). Cada toque deja una fila `estado=LLAMADA` (auditoría: «Se hizo llamada al residente… sin registro de la visita»; un solo registro si el mismo guardia repite en 2 min). No sale en la garita, no cuenta en el resumen de WhatsApp y se ve en Reporte → estado «Llamada sin registro». Migración 0007 reconstruye `accesos`/`movimientos` (el CHECK de la base real no tiene nombre).
+- **Listas de visitas**: el prompt exige una visita por cada nombre separado por comas/«y»/líneas (incluida la primera; antes «Viene de visita Kléber, Valentina, Angela» perdía a Kléber y «Karla, William, Carlos» daba 0). Con 2+ visitas el bot responde «Registré N visitas… Si falta alguien, escríbeme solo su nombre».

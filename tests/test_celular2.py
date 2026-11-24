@@ -149,3 +149,53 @@ def test_exportar_residentes_excel_solo_admin(admin, guardia):
     assert filas[0][:4] == ("Cédula", "Nombre", "Casa", "Estado de pago")
     assert filas[1][1:] == ("Juan Pérez", CASA, "Al día", "593988391178", "593991112223", "esposa")
     assert guardia.get("/api/residentes/exportar.xlsx").status_code == 403
+
+
+# ---------- varias visitas en un mensaje y auditoría de llamadas ----------
+def test_varias_visitas_en_un_mensaje_se_confirman_con_el_conteo(admin, wsp):
+    from conftest import texto
+    alta(admin)
+    texto(admin, "593988391178", "Karla, William, Carlos")
+    t = wsp[-1][1]
+    assert "Registré 3 visitas" in t and "Karla" in t and "William" in t and "Carlos" in t and "escríbeme solo su nombre" in t
+
+
+def test_una_sola_visita_mantiene_el_mensaje_de_siempre(admin, wsp):
+    from conftest import texto
+    alta(admin)
+    texto(admin, "593988391178", "Hoy viene Pedro Gómez")
+    assert wsp[-1][1].startswith("✅ Pre-autorizado en Casa")
+
+
+def test_el_prompt_pide_incluir_a_todos_los_de_una_lista():
+    import main
+    assert "primera de la lista" in main.SYSTEM_PROMPT
+
+
+def test_llamar_deja_auditoria_oculta_en_garita(admin, guardia):
+    alta(admin)
+    rid = lista(admin)[0]["id"]
+    assert guardia.get(f"/api/residentes/{rid}/llamar", follow_redirects=False).status_code == 302
+    llamadas = [x for x in admin.get("/api/accesos?todos=1").json() if x["estado"] == "LLAMADA"]
+    assert len(llamadas) == 1
+    x = llamadas[0]
+    assert x["casa"] == CASA and x["origen"] == "garita" and "sin registro" in x["observaciones"]
+    assert guardia.get("/api/accesos").json() == []                       # no aparece en la garita
+    # varios toques seguidos = un solo registro
+    guardia.get(f"/api/residentes/{rid}/llamar", follow_redirects=False)
+    assert len([x for x in admin.get("/api/accesos?todos=1").json() if x["estado"] == "LLAMADA"]) == 1
+    # el reporte la puede filtrar y el resumen de WhatsApp no la cuenta como visita
+    assert admin.get("/api/reporte?vista=visitas&estado=LLAMADA").json()["total"] == 1
+    import config
+    from resumen import armar_resumen
+    import db
+    with db.engine.connect() as conn:
+        assert "No hay visitas" in armar_resumen(conn, "hoy")
+
+
+def test_llamar_en_casa_con_mora_no_deja_registro(admin, guardia):
+    alta(admin)
+    rid = lista(admin)[0]["id"]
+    admin.post("/api/casas/pago", json={"casa": CASA, "al_dia": False})
+    assert guardia.get(f"/api/residentes/{rid}/llamar", follow_redirects=False).status_code == 403
+    assert [x for x in admin.get("/api/accesos?todos=1").json() if x["estado"] == "LLAMADA"] == []

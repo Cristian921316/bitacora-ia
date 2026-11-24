@@ -211,6 +211,10 @@ SYSTEM_PROMPT = (
     "casa (número o nombre de la casa del residente), nombre_visitante, tipo (VISITA, DELIVERY, TAXI_UBER "
     "o SERVICIO_TECNICO), placa (null si no se menciona) y observaciones (null si no hay). "
     "Si no se menciona el nombre del visitante usa una descripción corta (p. ej. 'Repartidor', 'Taxi'). "
+    "Si el mensaje enumera varias personas (separadas por comas, por 'y' o por saltos de línea), cada una es una visita "
+    "distinta: incluye SIEMPRE a todas, también a la primera de la lista, aunque venga justo después de frases como "
+    "'viene de visita' o 'deben estar por ingresar'. Una lista de solo nombres ('Ana, Luis, Marta') también son visitas. "
+    "Ejemplo: 'Deben estar por ingresar Ana, Luis, Marta' -> 3 visitas: Ana, Luis y Marta. "
     "Si el audio no contiene ninguna visita devuelve una lista vacía."
 )
 
@@ -604,7 +608,7 @@ def _casas_que_coinciden(conn, mz: str, villa: str) -> list:
 
 
 @app.get("/api/residentes/{rid}/llamar")
-def llamar_residente(rid: int, _: dict = Depends(usuario_actual)):
+def llamar_residente(rid: int, u: dict = Depends(usuario_actual)):
     """Botón «Llamar» de la garita: abre el chat de WhatsApp del residente (wa.me) para que el guardia lo llame desde ahí.
     El celular NO viaja en la página ni en el JSON de la garita: solo en esta redirección, que exige sesión.
     Va al celular principal; si la persona solo tiene el segundo, a ese. Casa con mora: no se llama (igual que el aviso)."""
@@ -617,6 +621,18 @@ def llamar_residente(rid: int, _: dict = Depends(usuario_actual)):
     tels = telefonos_de(r)
     if not tels:
         raise HTTPException(404, "Este residente no tiene celular")
+    ahora = ahora_iso()
+    with engine.begin() as conn:   # auditoría: queda guardada aunque el navegador no llegue a abrir WhatsApp
+        reciente = conn.execute(select(accesos.c.id).where(
+            accesos.c.estado == "LLAMADA", accesos.c.respondido_por == str(rid), accesos.c.autorizado_por == u["usuario"],
+            accesos.c.fecha_hora >= (datetime.now() - timedelta(minutes=2)).isoformat(timespec="seconds"))).first()
+        if reciente is None:        # varios toques seguidos del mismo guardia al mismo residente = un solo registro
+            nuevo_id = conn.execute(insert(accesos).values(
+                casa=r.casa, nombre_visitante="Sin nombre (llamada)", tipo="VISITA", estado="LLAMADA",
+                observaciones=f"Se hizo llamada al residente {r.nombre or 'sin nombre'} por WhatsApp, sin registro de la visita",
+                autorizado_por=u["usuario"], fecha_hora=ahora, origen="garita", respondido_por=str(rid))).inserted_primary_key[0]
+            conn.execute(insert(movimientos).values(acceso_id=nuevo_id, evento="LLAMADA", fecha_hora=ahora,
+                                                    origen="garita", usuario=u["usuario"]))
     return RedirectResponse(f"https://wa.me/{solo_digitos(tels[0])}", status_code=302)
 
 
@@ -871,7 +887,11 @@ async def procesar_mensaje_wsp(telefono: str, texto_msg: Optional[str], voz: Opt
             f"• {r['nombre_visitante']} ({r['tipo']})" + (f" – placa {r['placa']}" if r["placa"] else "")
             for r in regs
         )
-        await responder_wsp(telefono, f"✅ Pre-autorizado en Casa {res['casa']}:\n{lineas}")
+        if len(regs) > 1:    # varias personas: se dice cuántas se registraron para que el residente note si falta alguien
+            await responder_wsp(telefono, f"✅ Registré {len(regs)} visitas en Casa {res['casa']}:\n{lineas}\n\n"
+                                          "Si falta alguien, escríbeme solo su nombre.")
+        else:
+            await responder_wsp(telefono, f"✅ Pre-autorizado en Casa {res['casa']}:\n{lineas}")
     return {"ok": True, "registros": len(regs)}
 
 
